@@ -18,8 +18,8 @@ solarflow_discharge_last:
   mode: box
   initial: 0
   icon: mdi:battery-arrow-down
-#      Tracks last discharge limit sent to SolarFlow.
-#      Used for delta comparison to avoid redundant commands.
+  # Tracks last discharge limit sent to SolarFlow.
+  # Used for delta comparison to avoid redundant commands.
 
 solarflow_charge_last:
   name: SolarFlow last AC charge limit
@@ -30,8 +30,8 @@ solarflow_charge_last:
   mode: box
   initial: 0
   icon: mdi:battery-arrow-up
-#      Tracks last AC charge limit sent to SolarFlow.
-#      Used for delta comparison to avoid redundant commands.
+  # Tracks last AC charge limit sent to SolarFlow.
+  # Used for delta comparison to avoid redundant commands.
 
 solarflow_deadband:
   name: SolarFlow grid deadband
@@ -42,9 +42,9 @@ solarflow_deadband:
   mode: slider
   initial: 50
   icon: mdi:sine-wave
-#      Grid power hysteresis band (±W around 0).
-#      Higher = less responsive, lower API calls.
-#      Default: 50 W.
+  # Grid power hysteresis band (±W around 0).
+  # Higher = less responsive, lower API calls.
+  # Default: 50 W.
 
 solarflow_soc_discharge_min:
   name: SolarFlow min SoC for discharge
@@ -55,8 +55,8 @@ solarflow_soc_discharge_min:
   mode: slider
   initial: 25
   icon: mdi:battery-arrow-down
-#      Do not discharge below this SoC %.
-#      Protects battery health. Default: 25 %.
+  # Do not discharge below this SoC %.
+  # Protects battery health. Default: 25 %.
 
 solarflow_soc_charge_max:
   name: SolarFlow max SoC for charge
@@ -67,5 +67,5 @@ solarflow_soc_charge_max:
   mode: slider
   initial: 90
   icon: mdi:battery-arrow-up
-#      Do not charge above this SoC %.
-#      Protects battery health. Default: 90 %.
+  # Do not charge above this SoC %.
+  # Protects battery health. Default: 90 %.

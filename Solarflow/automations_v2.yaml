@@ -2,46 +2,55 @@
 # SolarFlow Grid-Zero Automations (optimized)
 #
 # Entities expected:
-#  - sensor.shelly_phase_a_power           (W)   - grid sign: + import, - export
-#  - sensor.solarflow_800_pro_electric_level  (%)   - battery SoC 0..100
-#  - number.solarflow_800_pro_output_limit     (W)   - set SolarFlow discharge
-#  - number.solarflow_800_pro_input_limit     (W)   - set SolarFlow AC charge
+# - sensor.shelly_phase_a_power (W) - grid sign: + import, - export
+# - sensor.solarflow_800_pro_electric_level (%) - battery SoC 0..100
+# - number.solarflow_800_pro_output_limit (W) - set SolarFlow discharge
+# - number.solarflow_800_pro_input_limit (W) - set SolarFlow AC charge
 #
 # Helpers (input_number) expected:
-#  - input_number.solarflow_min_delta     (W)   - minimum change before sending setpoint (50 recommended)
-#  - input_number.solarflow_discharge_last(W)   - last discharge sent
-#  - input_number.solarflow_charge_last   (W)   - last charge sent
+# - input_number.solarflow_min_delta (W)            - minimum change before sending setpoint
+# - input_number.solarflow_discharge_last (W)      - last discharge sent
+# - input_number.solarflow_charge_last (W)         - last charge sent
+# - input_number.solarflow_deadband (W)            - grid deadband around 0 W
+# - input_number.solarflow_soc_discharge_min (%)   - min SoC for discharge
+# - input_number.solarflow_soc_charge_max (%)      - max SoC for AC charge
 #
 # Notes:
-#  - Night: hard idle 23:00-08:00 (no charge, no discharge)
-#  - Day: 08:00-23:00 dynamic control with ±deadband and delta hysteresis
-#  - SoC debounce increased to 20s to reduce noise
+# - Night: hard idle 23:00–08:00 (no charge, no discharge)
+# - Day: 08:00–23:00 dynamic control with ±deadband and delta hysteresis
+# - SoC debounce increased to 20s to reduce noise
 ####################################################################
 
 # ============================================================================
 # NIGHT: Force SolarFlow idle (23:00 - 08:00)
 # ============================================================================
+
 - id: solarflow_night_idle
   alias: "SolarFlow – Night Idle (23:00–08:00)"
   description: "Keep SolarFlow completely idle during night hours"
-  mode: restart  # or queued
+  mode: restart
+
   trigger:
     # Safety enforcement every 10 minutes while night
     - platform: time_pattern
       minutes: "/10"
       id: periodic_check
+
     # Ensure correct state after HA restart
     - platform: homeassistant
       event: start
       id: ha_startup
+
     # Immediate hard edge at 23:00
     - platform: time
       at: "23:00:00"
       id: night_start
+
     # Ensure immediate enforcement at night end too (handles manual edits)
     - platform: time
       at: "08:00:00"
       id: night_end_check
+
   condition:
     # Active only during night window (spans midnight) using OR
     - condition: or
@@ -50,7 +59,9 @@
           after: "23:00:00"
         - condition: time
           before: "08:00:00"
+
   action:
+    # Set both limits to zero
     - service: number.set_value
       target:
         entity_id:
@@ -58,6 +69,7 @@
           - number.solarflow_800_pro_input_limit
       data:
         value: 0
+
     # Keep the "last" helpers in sync to avoid immediate delta-trigger on day start
     - service: input_number.set_value
       target:
@@ -66,6 +78,7 @@
           - input_number.solarflow_charge_last
       data:
         value: 0
+
     # Lightweight debug message (debug-level)
     - service: system_log.write
       data:
@@ -76,47 +89,62 @@
 # ============================================================================
 # DAY: Grid-zero controller (08:00 - 23:00)
 # ============================================================================
+
 - id: solarflow_day_grid_zero
   alias: "SolarFlow – Daytime Grid-Zero (Phase A) - Optimized"
   description: >
-    Maintain grid power near zero on phase A by adjusting SolarFlow discharge
-    and AC charge limits.
-  mode: single
+    Maintain grid power near zero on phase A by adjusting SolarFlow
+    discharge and AC charge limits.
+  mode: restart
+
   trigger:
     # React to grid power changes with short debounce
     - platform: state
       entity_id: sensor.shelly_phase_a_power
       for: "00:00:10"
       id: grid_change
+
     # React to SoC changes, use longer debounce to avoid noise
     - platform: state
       entity_id: sensor.solarflow_800_pro_electric_level
       for: "00:00:20"
       id: soc_change
+
     # Safety tick to catch missed events
     - platform: time_pattern
       minutes: "/3"
       id: safety_tick
+
     # Ensure immediate enforcement at day start
     - platform: time
       at: "08:00:00"
       id: day_start
+
+    # Ensure correct enforcement after HA restart (only applies in day window via condition)
+    - platform: homeassistant
+      event: start
+      id: ha_startup
+
   condition:
     # Active only during day window
     - condition: time
       after: "08:00:00"
       before: "23:00:00"
+
     # Sensors / numbers must be available
     - condition: template
       value_template: >
         {{ states('sensor.solarflow_800_pro_electric_level') not in ['unknown','unavailable'] }}
+
     - condition: template
       value_template: >
         {{ states('sensor.shelly_phase_a_power') not in ['unknown','unavailable'] }}
+
     - condition: template
       value_template: >
-        {{ states('number.solarflow_800_pro_output_limit') not in ['unknown','unavailable'] and
-            states('number.solarflow_800_pro_input_limit') not in ['unknown','unavailable'] }}
+        {{ states('number.solarflow_800_pro_output_limit') not in ['unknown','unavailable']
+           and states('number.solarflow_800_pro_input_limit') not in ['unknown','unavailable'] }}
+
   action:
     - variables:
         # -------------------------
@@ -133,31 +161,30 @@
         deadband: "{{ states('input_number.solarflow_deadband') | float(50) | int }}"
         soc_discharge_min: "{{ states('input_number.solarflow_soc_discharge_min') | float(25) | int }}"
         soc_charge_max: "{{ states('input_number.solarflow_soc_charge_max') | float(90) | int }}"
-        max_discharge: 800  # device max discharge (W) - hardcoded is fine
-        max_charge: 1000    # device max AC charge (W) - hardcoded is fine
-        min_delta: "{{ states('input_number.solarflow_min_delta') | float(50) }}"
+        max_discharge: 800   # device max discharge (W)
+        max_charge: 1000     # device max AC charge (W)
+        min_delta: "{{ states('input_number.solarflow_min_delta') | float(50) | int }}"
 
         # -------------------------
         # Target calculations
         # -------------------------
-        target_discharge: >
+        target_discharge: >-
           {% if grid > deadband and soc > soc_discharge_min %}
-            {% set p = grid - deadband %}
-            {% set p = [p, max_discharge] | min %}
-            {{ (p | round(0)) | int }}
+          {% set p = grid - deadband %}
+          {% set p = [p, max_discharge] | min %}
+          {{ (p | round(0)) | int }}
           {% else %}
-            0
+          0
           {% endif %}
 
-        target_charge: >
+        target_charge: >-
           {% if grid < -deadband and soc < soc_charge_max %}
-            {% set p = (grid | abs) - deadband %}
-            {% set p = [p, max_charge] | min %}
-            {{ (p | round(0)) | int }}
+          {% set p = (grid | abs) - deadband %}
+          {% set p = [p, max_charge] | min %}
+          {{ (p | round(0)) | int }}
           {% else %}
-            0
+          0
           {% endif %}
-
 
     # -------------------------
     # Decision branches
@@ -169,20 +196,17 @@
         - conditions:
             - condition: template
               value_template: "{{ target_discharge | int > 0 }}"
-
           sequence:
-            # compute delta and decide if we should send new discharge setpoint
             - variables:
                 new_dis: "{{ target_discharge | int }}"
                 old_dis: "{{ last_discharge | int }}"
                 delta_dis: "{{ (new_dis - old_dis) | abs }}"
 
-            # Send discharge when delta threshold reached OR previously non-zero to zero transitions handled here
+            # Send discharge when delta threshold reached
             - condition: template
-              value_template: >
-                {{ delta_dis >= min_delta or (new_dis == 0 and old_dis != 0) }}
+              value_template: "{{ delta_dis >= min_delta }}"
 
-            # 1) Set discharge to target_discharge (always send when this block reached)
+            # 1) Set discharge to target_discharge
             - service: number.set_value
               target:
                 entity_id: number.solarflow_800_pro_output_limit
@@ -190,7 +214,7 @@
                 value: "{{ new_dis }}"
               continue_on_error: false
 
-            # 2) Ensure AC charge is off immediately (send 0 unconditionally to avoid stale opposite-state)
+            # 2) Ensure AC charge is off immediately (send 0 unconditionally)
             - service: number.set_value
               target:
                 entity_id: number.solarflow_800_pro_input_limit
@@ -204,6 +228,7 @@
                 entity_id: input_number.solarflow_discharge_last
               data:
                 value: "{{ new_dis }}"
+
             - service: input_number.set_value
               target:
                 entity_id: input_number.solarflow_charge_last
@@ -224,7 +249,6 @@
         - conditions:
             - condition: template
               value_template: "{{ target_charge | int > 0 }}"
-
           sequence:
             - variables:
                 new_ch: "{{ target_charge | int }}"
@@ -232,9 +256,7 @@
                 delta_ch: "{{ (new_ch - old_ch) | abs }}"
 
             - condition: template
-              value_template: >
-                {{ delta_ch >= min_delta or (new_ch == 0 and old_ch != 0) }}
-
+              value_template: "{{ delta_ch >= min_delta }}"
 
             # 1) Set AC charge limit
             - service: number.set_value
@@ -258,6 +280,7 @@
                 entity_id: input_number.solarflow_charge_last
               data:
                 value: "{{ new_ch }}"
+
             - service: input_number.set_value
               target:
                 entity_id: input_number.solarflow_discharge_last
@@ -309,19 +332,21 @@
 
 # ============================================================================
 # OPTIONAL DEBUG: Log setpoint changes (info level)
-# Turn this off if it creates too many logs. Kept lightweight and informative.
 # ============================================================================
+
 - id: solarflow_debug_command_timing
   alias: "SolarFlow – Debug Command Timing (light)"
   description: "Log when discharge/charge limits change"
   mode: parallel
   max: 5
+
   trigger:
     - platform: state
       entity_id:
         - number.solarflow_800_pro_output_limit
         - number.solarflow_800_pro_input_limit
       id: limit_changed
+
   action:
     - service: system_log.write
       data:
