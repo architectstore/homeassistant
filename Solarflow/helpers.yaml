@@ -1,0 +1,71 @@
+solarflow_min_delta:
+  name: SolarFlow min power delta
+  min: 0
+  max: 100
+  step: 10
+  unit_of_measurement: W
+  mode: box
+  initial: 50
+  icon: mdi:delta
+  # Hysteresis threshold (W). Recommended: 0 or 50. Max ~100 W to avoid stale states.
+
+solarflow_discharge_last:
+  name: SolarFlow last discharge limit
+  min: 0
+  max: 800
+  step: 10
+  unit_of_measurement: W
+  mode: box
+  initial: 0
+  icon: mdi:battery-arrow-down
+#      Tracks last discharge limit sent to SolarFlow.
+#      Used for delta comparison to avoid redundant commands.
+
+solarflow_charge_last:
+  name: SolarFlow last AC charge limit
+  min: 0
+  max: 1000
+  step: 10
+  unit_of_measurement: W
+  mode: box
+  initial: 0
+  icon: mdi:battery-arrow-up
+#      Tracks last AC charge limit sent to SolarFlow.
+#      Used for delta comparison to avoid redundant commands.
+
+solarflow_deadband:
+  name: SolarFlow grid deadband
+  min: 0
+  max: 200
+  step: 5
+  unit_of_measurement: W
+  mode: slider
+  initial: 50
+  icon: mdi:sine-wave
+#      Grid power hysteresis band (±W around 0).
+#      Higher = less responsive, lower API calls.
+#      Default: 50 W.
+
+solarflow_soc_discharge_min:
+  name: SolarFlow min SoC for discharge
+  min: 0
+  max: 50
+  step: 1
+  unit_of_measurement: "%"
+  mode: slider
+  initial: 25
+  icon: mdi:battery-arrow-down
+#      Do not discharge below this SoC %.
+#      Protects battery health. Default: 25 %.
+
+solarflow_soc_charge_max:
+  name: SolarFlow max SoC for charge
+  min: 50
+  max: 100
+  step: 1
+  unit_of_measurement: "%"
+  mode: slider
+  initial: 90
+  icon: mdi:battery-arrow-up
+#      Do not charge above this SoC %.
+#      Protects battery health. Default: 90 %.

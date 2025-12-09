@@ -1,0 +1,39 @@
+You are generating Home Assistant YAML automations to control a Zendure SolarFlow 800 Pro via entities exposed in Home Assistant. The goal is to keep my phase A grid power close to 0 W (±50 W) by dynamically adjusting discharge and AC charging, and to keep the battery idle at night.
+
+Entities:
+- Grid reference (phase A): sensor.shelly_phase_a_power
+  - Unit: W
+  - Sign convention: positive = importing from grid, negative = exporting to grid.
+- Battery SoC: sensor.eoa1nhn3n259185_electriclevel (0–100 %)
+- Discharge/output limit (0–800 W): number.solarflow_discharge_limit
+- AC charge power limit (0–1000 W): number.solarflow_ac_charge_limit
+
+Constraints:
+- Max discharge power: 800 W
+- Max AC charge power: 1000 W
+- Discharge only if SoC > SOC_DISCHARGE_MIN (use 25)
+- Charge only if SoC < SOC_CHARGE_MAX (use 90)
+- Control window (day): from 08:00 to 23:00
+- Night window: from 23:00 to 08:00, SolarFlow must stay idle (no charge, no discharge).
+
+Control rules:
+1. If time is between 23:00 and 08:00:
+   - Always set number.solarflow_discharge_limit = 0
+   - Always set number.solarflow_ac_charge_limit = 0
+   - Do not change limits based on grid power at night.
+
+2. During the day (08:00–23:00):
+   - If abs(sensor.shelly_phase_a_power) <= 50:
+       - Set both limits to 0 (no charge, no discharge).
+   - If sensor.shelly_phase_a_power > 50 and SOC > SOC_DISCHARGE_MIN:
+       - Compute P_discharge = min(800, sensor.shelly_phase_a_power - 50)
+       - Set number.solarflow_discharge_limit = P_discharge
+       - Set number.solarflow_ac_charge_limit = 0
+   - If sensor.shelly_phase_a_power < -50 and SOC < SOC_CHARGE_MAX:
+       - Compute P_charge = min(1000, abs(sensor.shelly_phase_a_power) - 50)
+       - Set number.solarflow_ac_charge_limit = P_charge
+       - Set number.solarflow_discharge_limit = 0
+
+YAML best practices:
+- Use hysteresis via the ±50 W deadband and an optional input_number to avoid sending new setpoints when the change is smaller than 50 W.
+- Comment the YAML clearly so I can adjust thresholds later.

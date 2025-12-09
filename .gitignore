@@ -1,0 +1,96 @@
+# -------------------------
+# macOS SYSTEM FILES
+# -------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Spotlight and Finder
+.Trashes
+.Spotlight-V100
+.fseventsd
+.AppleDesktop
+.Icon?
+.metadata_never_index
+
+# -------------------------
+# PYTHON / VENV (Common for HA)
+# -------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+venv/
+env/
+.venv/
+
+# -------------------------
+# HOME ASSISTANT
+# -------------------------
+
+# Database files
+home-assistant_v2.db*
+home-assistant.log*
+home-assistant-*.log
+*.db-shm
+*.db-wal
+
+# Backup & config
+*.backup
+*.db-journal
+*.yaml.save
+*.tmp
+*.swp
+*.bak
+
+# SSL & Secrets
+ssl/
+secrets.yaml
+secrets.*
+*.pem
+*.crt
+*.key
+
+# Custom integrations
+custom_components/__pycache__/
+custom_components/*/__pycache__/
+
+# Recorder / history
+.history
+.storage/*.migration
+.storage/*cache*
+.storage/*.backup
+
+# Zigbee / Z-Wave
+zigbee.db*
+zwave*.log
+*.zigbee
+
+# Media storage
+www/*.log
+www/*.tmp
+
+# -------------------------
+# NODE / JS (add-ons, dashboards, dev)
+# -------------------------
+node_modules/
+npm-debug.log
+yarn-error.log
+dist/
+build/
+
+# -------------------------
+# IDE / EDITOR
+# -------------------------
+.vscode/
+.idea/
+*.code-workspace
+
+# -------------------------
+# DOCKER
+# -------------------------
+docker-compose.override.yml
+*.pid
