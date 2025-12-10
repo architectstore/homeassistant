@@ -70,8 +70,4 @@ solarflow_soc_charge_max:
   # Do not charge above this SoC %.
   # Protects battery health. Default: 90 %.
 
-solarflow_last_command_time:
-  name: SolarFlow last command timestamp
-  has_date: true
-  has_time: true
-  icon: mdi:clock-outline
+

@@ -1,30 +1,44 @@
 # ============================================================================
-# DAY: Grid-zero controller (08:00 - 23:00)
+# DAY: Grid-zero controller (08:00 - 23:00) - STICKY VERSION WITH FAST SAFETY
 # ============================================================================
 
 - id: solarflow_day_grid_zero
-  alias: "SolarFlow – Daytime Grid-Zero (Phase A) - Optimized"
+  alias: "SolarFlow – Daytime Grid-Zero (Phase A) - Sticky Control"
   description: >
     Maintain grid power near zero on phase A by adjusting SolarFlow
-    discharge and AC charge limits.
+    discharge and AC charge limits. Uses sticky setpoints to avoid chasing
+    device overshoot, with fast emergency response for large import/export.
   mode: restart
 
   trigger:
-    # React to grid power changes with short debounce
+    # FAST reaction to large grid import (toaster, cloud, etc.) - no debounce
+    - platform: numeric_state
+      entity_id: sensor.shelly_phase_a_power
+      above: 200  # if importing > 200W, react immediately
+      id: grid_import_emergency
+
+    # SLOW reaction to normal grid changes (stability) - 60s debounce
     - platform: state
       entity_id: sensor.shelly_phase_a_power
-      for: "00:00:10"
-      id: grid_change
+      for: "00:01:00"
+      id: grid_change_slow
 
-    # React to SoC changes, use longer debounce to avoid noise
+    # FAST reaction to large grid export increase - 10s debounce
+    - platform: numeric_state
+      entity_id: sensor.shelly_phase_a_power
+      below: -300  # if exporting > 300W for 10s, increase charge
+      for: "00:00:10"
+      id: grid_export_high
+
+    # React to SoC changes
     - platform: state
       entity_id: sensor.solarflow_800_pro_electric_level
-      for: "00:00:20"
+      for: "00:01:00"
       id: soc_change
 
     # Safety tick to catch missed events
     - platform: time_pattern
-      minutes: "/3"
+      minutes: "/10"
       id: safety_tick
 
     # Ensure immediate enforcement at day start
@@ -32,7 +46,7 @@
       at: "08:00:00"
       id: day_start
 
-    # Ensure correct enforcement after HA restart (only applies in day window via condition)
+    # Ensure correct enforcement after HA restart
     - platform: homeassistant
       event: start
       id: ha_startup
@@ -68,48 +82,75 @@
         last_charge: "{{ states('input_number.solarflow_charge_last') | float(0) }}"
 
         # -------------------------
-        # Tunable thresholds (from helpers)
+        # Tunable thresholds
         # -------------------------
         deadband: "{{ states('input_number.solarflow_deadband') | float(50) | int }}"
         soc_discharge_min: "{{ states('input_number.solarflow_soc_discharge_min') | float(25) | int }}"
         soc_charge_max: "{{ states('input_number.solarflow_soc_charge_max') | float(90) | int }}"
-        max_discharge: 800   # device max discharge (W)
-        max_charge: 1000     # device max AC charge (W)
-        min_delta: "{{ states('input_number.solarflow_min_delta') | float(30) | int }}"
-        import_cutoff: 100   # allowed import while still keeping last charge (W)
-
+        max_discharge: 800
+        max_charge: 1000
+        min_delta: 150  # very high to prevent small adjustments
+        
+        # Sticky band: only recalculate if grid is far outside this range
+        charge_lower_bound: -400  # if exporting > 400W, increase charge
+        charge_upper_bound: 300   # if importing > 300W, decrease charge
+        discharge_lower_bound: 300   # if importing > 300W, increase discharge
+        
         # -------------------------
-        # Target calculations
+        # STICKY Target calculations
         # -------------------------
         target_discharge: >-
-          {% set k = 1.2 %}
-          {% if grid > deadband and soc > soc_discharge_min %}
-          {% set p = (grid - deadband) * k %}
-          {% set p = [p, max_discharge] | min %}
-          {{ (p | round(0)) | int }}
+          {% set ld = last_discharge | int %}
+          {% set g = grid %}
+          
+          {# Already discharging: only change if grid way outside bounds #}
+          {% if ld > 0 %}
+            {% if g > discharge_lower_bound + 200 %}
+              {# Grid import very high, increase discharge #}
+              {% set p = (g - deadband) * 0.7 %}
+              {% set p = [p, max_discharge] | min %}
+              {{ (p | round(0)) | int }}
+            {% elif g < deadband %}
+              {# Grid near zero or exporting, stop discharge #}
+              0
+            {% else %}
+              {# Within bounds, keep current #}
+              {{ ld }}
+            {% endif %}
+          {# Not discharging: start only if grid clearly above threshold #}
+          {% elif g > deadband + 100 and soc > soc_discharge_min %}
+            {% set p = (g - deadband) * 0.7 %}
+            {% set p = [p, max_discharge] | min %}
+            {{ (p | round(0)) | int }}
           {% else %}
-          0
+            0
           {% endif %}
 
         target_charge: >-
-          {% set g = grid %}
           {% set lc = last_charge | int %}
-          {% set k = 1.2 %}
-
-          {# CASE 1: We are clearly exporting more than deadband → (re)calculate charge #}
-          {% if g < -deadband and soc < soc_charge_max %}
-          {% set p = (g | abs - deadband) * k %}
-          {% set p = [p, max_charge] | min %}
-          {{ (p | round(0)) | int }}
-
-          {# CASE 2: We were charging, grid is close to zero band → keep last charge #}
-          {% elif lc > 0 and soc < soc_charge_max
-                 and g >= -deadband and g < import_cutoff %}
-          {{ lc }}
-
-          {# CASE 3: No reason to charge #}
+          {% set g = grid %}
+          
+          {# Already charging: only change if grid way outside bounds #}
+          {% if lc > 0 and soc < soc_charge_max %}
+            {% if g < charge_lower_bound %}
+              {# Grid export very high, increase charge #}
+              {% set p = (g | abs - deadband) * 0.7 %}
+              {% set p = [p, max_charge] | min %}
+              {{ (p | round(0)) | int }}
+            {% elif g > charge_upper_bound %}
+              {# Grid import too high, stop charging #}
+              0
+            {% else %}
+              {# Within acceptable band, keep current charge #}
+              {{ lc }}
+            {% endif %}
+          {# Not charging: start only if clearly exporting #}
+          {% elif g < -(deadband + 100) and soc < soc_charge_max %}
+            {% set p = (g | abs - deadband) * 0.7 %}
+            {% set p = [p, max_charge] | min %}
+            {{ (p | round(0)) | int }}
           {% else %}
-          0
+            0
           {% endif %}
 
     # -------------------------
@@ -128,11 +169,11 @@
                 old_dis: "{{ last_discharge | int }}"
                 delta_dis: "{{ (new_dis - old_dis) | abs }}"
 
-            # Send discharge when delta threshold reached
+            # Send discharge when delta threshold reached OR starting from zero
             - condition: template
-              value_template: "{{ delta_dis >= min_delta }}"
+              value_template: "{{ delta_dis >= min_delta or (new_dis > 0 and old_dis == 0) }}"
 
-            # 1) Set discharge to target_discharge
+            # Set discharge
             - service: number.set_value
               target:
                 entity_id: number.solarflow_800_pro_output_limit
@@ -140,7 +181,7 @@
                 value: "{{ new_dis }}"
               continue_on_error: false
 
-            # 2) Ensure AC charge is off immediately (send 0 unconditionally)
+            # Ensure AC charge is off
             - service: number.set_value
               target:
                 entity_id: number.solarflow_800_pro_input_limit
@@ -148,7 +189,7 @@
                 value: 0
               continue_on_error: false
 
-            # 3) Update helper trackers so delta logic sees current state
+            # Update helpers
             - service: input_number.set_value
               target:
                 entity_id: input_number.solarflow_discharge_last
@@ -161,13 +202,13 @@
               data:
                 value: 0
 
-            # 4) Debug log
+            # Debug log
             - service: system_log.write
               data:
-                level: debug
+                level: info
                 logger: solarflow_grid_control
                 message: >
-                  "⬇️ DISCHARGE set → {{ new_dis }}W | grid={{ grid }}W soc={{ soc }}% (prev {{ old_dis }}W)"
+                  "⬇️ DISCHARGE set → {{ new_dis }}W | grid={{ grid }}W soc={{ soc }}% (prev {{ old_dis }}W, delta={{ delta_dis }}W, trigger={{ trigger.id }})"
 
         # ----------------------
         # BRANCH B: CHARGE ACTIVE
@@ -181,10 +222,11 @@
                 old_ch: "{{ last_charge | int }}"
                 delta_ch: "{{ (new_ch - old_ch) | abs }}"
 
+            # Send charge when delta threshold reached OR starting from zero
             - condition: template
-              value_template: "{{ delta_ch >= min_delta }}"
+              value_template: "{{ delta_ch >= min_delta or (new_ch > 0 and old_ch == 0) }}"
 
-            # 1) Set AC charge limit
+            # Set AC charge limit
             - service: number.set_value
               target:
                 entity_id: number.solarflow_800_pro_input_limit
@@ -192,7 +234,7 @@
                 value: "{{ new_ch }}"
               continue_on_error: false
 
-            # 2) Ensure discharge is off (send 0 unconditionally)
+            # Ensure discharge is off
             - service: number.set_value
               target:
                 entity_id: number.solarflow_800_pro_output_limit
@@ -200,7 +242,7 @@
                 value: 0
               continue_on_error: false
 
-            # 3) Update helpers
+            # Update helpers
             - service: input_number.set_value
               target:
                 entity_id: input_number.solarflow_charge_last
@@ -213,19 +255,19 @@
               data:
                 value: 0
 
-            # 4) Debug log
+            # Debug log
             - service: system_log.write
               data:
-                level: debug
+                level: info
                 logger: solarflow_grid_control
                 message: >
-                  "⬆️ CHARGE set → {{ new_ch }}W | grid={{ grid }}W soc={{ soc }}% (prev {{ old_ch }}W)"
+                  "⬆️ CHARGE set → {{ new_ch }}W | grid={{ grid }}W soc={{ soc }}% (prev {{ old_ch }}W, delta={{ delta_ch }}W, trigger={{ trigger.id }})"
 
       # ----------------------
       # DEFAULT: IDLE (both 0)
       # ----------------------
       default:
-        # Only send zeros if previously not idle (avoid spam)
+        # Only send zeros if previously not idle
         - condition: template
           value_template: >
             {{ (last_discharge | int) != 0 or (last_charge | int) != 0 }}
@@ -251,7 +293,7 @@
 
         - service: system_log.write
           data:
-            level: debug
+            level: info
             logger: solarflow_grid_control
             message: >
-              "⏸️ IDLE: grid={{ grid }}W (deadband ±{{ deadband }}), soc={{ soc }}%"
+              "⏸️ IDLE: grid={{ grid }}W (deadband ±{{ deadband }}), soc={{ soc }}%, trigger={{ trigger.id }}"
