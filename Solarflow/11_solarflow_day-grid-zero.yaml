@@ -1,31 +1,30 @@
 # ============================================================================
-# DAY: 100W step controller with memory (08:00 - 23:00)
+# DAY: Bidirectional 100W Grid-Zero (08:00 - 23:00)
 # ============================================================================
 
-- id: solarflow_day_step_100w
-  alias: "SolarFlow – Daytime 100W Step Control"
+- id: solarflow_day_grid_zero_step_100w
+  alias: "SolarFlow – Daytime 100W Grid-Zero (Charge+Discharge)"
   description: >
-    Charge in 100W steps starting at 150W surplus. Uses last_charge helper
-    to prevent oscillation after each step. Fast emergency stop only on
-    large import (e.g. toaster), not on small imports.
+    Keep Shelly Phase A around 0W using 100W steps.
+    Charges when exporting, discharges when importing.
   mode: restart
 
   trigger:
-    # FAST: large import -> stop charging quickly (toaster, big load)
+    # Import side (want discharge)
     - platform: numeric_state
       entity_id: sensor.shelly_phase_a_power
-      above: 500            # importing > 500W
-      for: "00:00:05"       # sustained for 5 seconds
-      id: fast_import
-
-    # FAST: large export -> increase charge quickly
-    - platform: numeric_state
-      entity_id: sensor.shelly_phase_a_power
-      below: -400           # exporting > 400W
+      above: 150          # importing >150W
       for: "00:00:10"
-      id: fast_export
+      id: import_high
 
-    # NORMAL: periodic reevaluation every 3 minutes
+    # Export side (want charge)
+    - platform: numeric_state
+      entity_id: sensor.shelly_phase_a_power
+      below: -150         # exporting >150W
+      for: "00:00:10"
+      id: export_high
+
+    # Periodic reevaluation
     - platform: time_pattern
       minutes: "/3"
       id: periodic
@@ -41,12 +40,12 @@
       id: ha_startup
 
   condition:
-    # Active only during day window
+    # Daytime only
     - condition: time
       after: "08:00:00"
       before: "23:00:00"
 
-    # Entities must be available
+    # Entities available
     - condition: template
       value_template: >
         {{ states('sensor.solarflow_800_pro_electric_level') not in ['unknown','unavailable'] }}
@@ -55,18 +54,72 @@
         {{ states('sensor.shelly_phase_a_power') not in ['unknown','unavailable'] }}
     - condition: template
       value_template: >
-        {{ states('number.solarflow_800_pro_input_limit') not in ['unknown','unavailable'] }}
+        {{ states('number.solarflow_800_pro_output_limit') not in ['unknown','unavailable']
+           and states('number.solarflow_800_pro_input_limit') not in ['unknown','unavailable'] }}
 
   action:
     - variables:
         grid: "{{ states('sensor.shelly_phase_a_power') | float(0) }}"
         soc: "{{ states('sensor.solarflow_800_pro_electric_level') | float(50) }}"
+        last_discharge: "{{ states('input_number.solarflow_discharge_last') | float(0) | int }}"
         last_charge: "{{ states('input_number.solarflow_charge_last') | float(0) | int }}"
-        soc_charge_max: "{{ states('input_number.solarflow_soc_charge_max') | float(90) | int }}"
 
-        # Calculate raw band (what grid alone suggests, ignoring current state)
-        # Grid sign: + import, - export
-        raw_band_step: >-
+        soc_discharge_min: "{{ states('input_number.solarflow_soc_discharge_min') | float(25) | int }}"
+        soc_charge_max: "{{ states('input_number.solarflow_soc_charge_max') | float(90) | int }}"
+        step_size: 100
+        max_discharge: 800
+        max_charge: 1000
+        min_delta: 80      # threshold to actually send a command
+
+        # -------------------------
+        # IMPORT → DISCHARGE steps
+        # -------------------------
+        import_step: >-
+          {% if soc <= soc_discharge_min %}
+            0
+          {% elif grid > 850 %}
+            8
+          {% elif grid > 750 %}
+            7
+          {% elif grid > 650 %}
+            6
+          {% elif grid > 550 %}
+            5
+          {% elif grid > 450 %}
+            4
+          {% elif grid > 350 %}
+            3
+          {% elif grid > 250 %}
+            2
+          {% elif grid > 150 %}
+            1
+          {% else %}
+            0
+          {% endif %}
+
+        import_power: >-
+          {% set p = import_step | int * step_size %}
+          {% if p > max_discharge %} {{ max_discharge }} {% else %} {{ p }} {% endif %}
+
+        target_discharge: >-
+          {% set ld = last_discharge | int %}
+          {% set rbp = import_power | int %}
+          {% set g = grid %}
+
+          {% if rbp > ld %}
+            {{ rbp }}          {# step up when band says higher #}
+          {% elif rbp < ld and g > 100 %}
+            {{ ld }}           {# still importing enough, keep for stability #}
+          {% elif rbp < ld %}
+            {{ rbp }}          {# import fell, step down #}
+          {% else %}
+            {{ ld }}           {# unchanged #}
+          {% endif %}
+
+        # -------------------------
+        # EXPORT → CHARGE steps
+        # -------------------------
+        export_step: >-
           {% if soc >= soc_charge_max %}
             0
           {% elif grid < -850 %}
@@ -89,53 +142,99 @@
             0
           {% endif %}
 
-        raw_band_power: "{{ raw_band_step | int * 100 }}"
+        export_power: >-
+          {% set p = export_step | int * step_size %}
+          {% if p > max_charge %} {{ max_charge }} {% else %} {{ p }} {% endif %}
 
-        # Decide actual desired power using hysteresis and last_charge
-        desired_power: >-
+        target_charge: >-
           {% set lc = last_charge | int %}
-          {% set rbp = raw_band_power | int %}
+          {% set rbp = export_power | int %}
           {% set g = grid %}
 
-          {# CASE 1: Stop charging if SoC maxed #}
-          {% if soc >= soc_charge_max %}
-            0
-
-          {# CASE 2: Raw band suggests HIGHER power than current → increase step #}
-          {% elif rbp > lc %}
-            {{ rbp }}
-
-          {# CASE 3: Raw band suggests LOWER power but we're still exporting a bit → keep current #}
+          {% if rbp > lc %}
+            {{ rbp }}          {# step up when surplus grows #}
           {% elif rbp < lc and g < -50 %}
-            {{ lc }}
-
-          {# CASE 4: Raw band lower and grid near zero or importing lightly → step down #}
+            {{ lc }}           {# still exporting, keep current charge #}
           {% elif rbp < lc %}
-            {{ rbp }}
-
-          {# CASE 5: Band equals current → keep #}
+            {{ rbp }}          {# surplus shrank, step down #}
           {% else %}
-            {{ lc }}
+            {{ lc }}           {# unchanged #}
           {% endif %}
 
-        # Size of change vs last command
-        delta_ch: "{{ (desired_power | int) - (last_charge | int) | abs }}"
+        # Enforce mutual exclusivity: if importing, prefer discharge;
+        # if exporting, prefer charge; near zero -> both 0.
+        final_discharge: >-
+          {% if grid > 150 %}
+            {{ target_discharge | int }}
+          {% else %}
+            0
+          {% endif %}
+        final_charge: >-
+          {% if grid < -150 %}
+            {{ target_charge | int }}
+          {% else %}
+            0
+          {% endif %}
+
+        delta_dis: "{{ (final_discharge | int) - (last_discharge | int) | abs }}"
+        delta_ch:  "{{ (final_charge    | int) - (last_charge    | int) | abs }}"
 
     - choose:
-        # Only send command if change is at least 80W (allows 100W steps through)
+        # BRANCH A: DISCHARGE
         - conditions:
             - condition: template
-              value_template: "{{ delta_ch >= 80 }}"
+              value_template: "{{ final_discharge | int > 0 }}"
+            - condition: template
+              value_template: "{{ delta_dis | int >= min_delta or (last_discharge | int) == 0 }}"
           sequence:
-            # Set AC charge limit
+            - service: number.set_value
+              target:
+                entity_id: number.solarflow_800_pro_output_limit
+              data:
+                value: "{{ final_discharge | int }}"
+              continue_on_error: false
+
             - service: number.set_value
               target:
                 entity_id: number.solarflow_800_pro_input_limit
               data:
-                value: "{{ desired_power | int }}"
+                value: 0
               continue_on_error: false
 
-            # Ensure discharge is off
+            - service: input_number.set_value
+              target:
+                entity_id: input_number.solarflow_discharge_last
+              data:
+                value: "{{ final_discharge | int }}"
+
+            - service: input_number.set_value
+              target:
+                entity_id: input_number.solarflow_charge_last
+              data:
+                value: 0
+
+            - service: system_log.write
+              data:
+                level: info
+                logger: solarflow_grid_control
+                message: >
+                  "STEP100 DISCH: grid={{ grid }}W, soc={{ soc }}%, new={{ final_discharge }}W,
+                   last={{ last_discharge }}W, delta={{ delta_dis }}W, trigger={{ trigger.id }}"
+
+        # BRANCH B: CHARGE
+        - conditions:
+            - condition: template
+              value_template: "{{ final_charge | int > 0 }}"
+            - condition: template
+              value_template: "{{ delta_ch | int >= min_delta or (last_charge | int) == 0 }}"
+          sequence:
+            - service: number.set_value
+              target:
+                entity_id: number.solarflow_800_pro_input_limit
+              data:
+                value: "{{ final_charge | int }}"
+              continue_on_error: false
+
             - service: number.set_value
               target:
                 entity_id: number.solarflow_800_pro_output_limit
@@ -143,12 +242,11 @@
                 value: 0
               continue_on_error: false
 
-            # Update helpers
             - service: input_number.set_value
               target:
                 entity_id: input_number.solarflow_charge_last
               data:
-                value: "{{ desired_power | int }}"
+                value: "{{ final_charge | int }}"
 
             - service: input_number.set_value
               target:
@@ -161,16 +259,35 @@
                 level: info
                 logger: solarflow_grid_control
                 message: >
-                  "STEP100: grid={{ grid }}W, soc={{ soc }}%, last={{ last_charge }}W,
-                   raw_band={{ raw_band_power }}W, desired={{ desired_power }}W,
-                   delta={{ delta_ch }}W, trigger={{ trigger.id }}"
+                  "STEP100 CHARGE: grid={{ grid }}W, soc={{ soc }}%, new={{ final_charge }}W,
+                   last={{ last_charge }}W, delta={{ delta_ch }}W, trigger={{ trigger.id }}"
 
+      # DEFAULT: IDLE (both 0)
       default:
-        # No meaningful change → do nothing
+        - condition: template
+          value_template: >
+            {{ (last_discharge | int) != 0 or (last_charge | int) != 0 }}
+
+        - service: number.set_value
+          target:
+            entity_id:
+              - number.solarflow_800_pro_output_limit
+              - number.solarflow_800_pro_input_limit
+          data:
+            value: 0
+          continue_on_error: false
+
+        - service: input_number.set_value
+          target:
+            entity_id:
+              - input_number.solarflow_discharge_last
+              - input_number.solarflow_charge_last
+          data:
+            value: 0
+
         - service: system_log.write
           data:
-            level: debug
+            level: info
             logger: solarflow_grid_control
             message: >
-              "STEP100: no change - grid={{ grid }}W, soc={{ soc }}%, last={{ last_charge }}W,
-               desired={{ desired_power }}W, delta={{ delta_ch }}W, trigger={{ trigger.id }}"
+              "STEP100 IDLE: grid={{ grid }}W, soc={{ soc }}%, trigger={{ trigger.id }}"
