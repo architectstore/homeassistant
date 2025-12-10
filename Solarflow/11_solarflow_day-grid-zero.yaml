@@ -76,25 +76,31 @@
         # -------------------------
         target_discharge: >-
           {% set ld = last_discharge | int %}
-          {% set g = grid %}
+          {% set g  = grid %}
           {% set soc_min = soc_discharge_min %}
+
           {% if soc <= soc_min %}
             0
-          {% elif g > 50 %}
-            {# Approximate load = current grid import + current discharge #}
-            {% set load_est = g + ld %}
-            {# Desired discharge ≈ load_est to push grid toward 0 #}
-            {% set desired = [load_est, max_discharge] | min %}
-            {# Round up to 100W step #}
-            {% set steps = ((desired + step_size - 1) // step_size) | int %}
-            {{ (steps * step_size) | int }}
-          {% elif g < -50 %}
-            {# Now clearly exporting while discharging -> step down by 1 #}
-            {{ [ld - step_size, 0] | max }}
-          {% else %}
-            {# Within small deadband around 0 -> keep current #}
+
+          {% elif (-20 <= g <= 50) %}
+            {# Grid already near target (+20W import band) -> keep current #}
             {{ ld }}
+
+          {% else %}
+            {# Approximate house load = current grid + current discharge #}
+            {% set load_est = g + ld %}
+            {# Aim for about +20W import (no stable export) #}
+            {% set desired = load_est - 20 %}
+            {% if desired < 0 %}
+              {% set desired = 0 %}
+            {% endif %}
+            {% set desired = [desired, max_discharge] | min %}
+            {# Round to nearest 100W step #}
+            {% set steps = ((desired + (step_size / 2)) // step_size) | int %}
+            {{ (steps * step_size) | int }}
           {% endif %}
+
+
 
         # -------------------------
         # EXPORT → CHARGE steps (unchanged)
@@ -144,11 +150,13 @@
         # Enforce mutual exclusivity: if importing, prefer discharge;
         # if exporting, prefer charge; near zero -> both 0.
         final_discharge: >-
-          {% if grid > 50 %}
+          {% if grid > -150 %}
             {{ target_discharge | int }}
           {% else %}
             0
           {% endif %}
+
+
         final_charge: >-
           {% if grid < -150 %}
             {{ target_charge | int }}
