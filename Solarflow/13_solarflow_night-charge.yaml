@@ -1,0 +1,144 @@
+# ============================================================================
+# NIGHT: Force SolarFlow night charge (23:00 - 08:00)
+# ============================================================================
+
+
+- id: solarflow_night_charge
+  alias: "SolarFlow – Night Charge (23:00–08:00)"
+  description: >
+    Charge SolarFlow from the grid at 1000 W during night hours when SoC
+    is low, with start/stop SoC thresholds.
+  mode: restart
+
+  trigger:
+    # Periodic safety enforcement during night
+    - platform: time_pattern
+      minutes: "/10"
+      id: periodic_check
+
+    # React to SoC changes
+    - platform: state
+      entity_id: sensor.solarflow_800_pro_electric_level
+      for: "00:00:20"
+      id: soc_change
+
+    # Hard edges at night start/end
+    - platform: time
+      at: "23:00:00"
+      id: night_start
+
+    - platform: time
+      at: "08:00:00"
+      id: night_end_check
+
+    # Ensure correct state after HA restart
+    - platform: homeassistant
+      event: start
+      id: ha_startup
+
+  condition:
+    # Only active during night (spans midnight)
+    - condition: or
+      conditions:
+        - condition: time
+          after: "23:00:00"
+        - condition: time
+          before: "08:00:00"
+
+    # SoC sensor must be valid
+    - condition: template
+      value_template: >
+        {{ states('sensor.solarflow_800_pro_electric_level') not in ['unknown','unavailable'] }}
+
+    # Numbers must be valid
+    - condition: template
+      value_template: >
+        {{ states('number.solarflow_800_pro_output_limit') not in ['unknown','unavailable']
+           and states('number.solarflow_800_pro_input_limit') not in ['unknown','unavailable'] }}
+
+  action:
+    - variables:
+        soc: "{{ states('sensor.solarflow_800_pro_electric_level') | float(50) }}"
+        last_charge: "{{ states('input_number.solarflow_charge_last') | float(0) }}"
+        # Start charging if SoC < 50 %.
+        # Keep charging until 90 % once started (hysteresis via last_charge > 0).
+        should_charge: >
+          {{ soc < 90 and (soc < 50 or last_charge > 0) }}
+        charge_power: 1000   # W
+
+    - choose:
+        # ----------------------
+        # BRANCH: CHARGE ACTIVE
+        # ----------------------
+        - conditions:
+            - condition: template
+              value_template: "{{ should_charge }}"
+          sequence:
+            # Ensure no discharge
+            - service: number.set_value
+              target:
+                entity_id: number.solarflow_800_pro_output_limit
+              data:
+                value: 0
+
+            # Charge at 1000 W
+            - service: number.set_value
+              target:
+                entity_id: number.solarflow_800_pro_input_limit
+              data:
+                value: "{{ charge_power }}"
+
+            # Sync helpers
+            - service: input_number.set_value
+              target:
+                entity_id: input_number.solarflow_discharge_last
+              data:
+                value: 0
+
+            - service: input_number.set_value
+              target:
+                entity_id: input_number.solarflow_charge_last
+              data:
+                value: "{{ charge_power }}"
+
+            # Log
+            - service: system_log.write
+              data:
+                level: debug
+                logger: solarflow_grid_control
+                message: >
+                  "🌙 NIGHT CHARGE: {{ charge_power }}W | soc={{ soc }}% (last={{ last_charge }}W)"
+
+      # ----------------------
+      # DEFAULT: STOP CHARGING
+      # ----------------------
+      default:
+        # Stop only if we were previously charging or discharging (avoid spam)
+        - condition: template
+          value_template: >
+            {{ (last_charge | int) != 0 }}
+
+        # Set both limits to zero
+        - service: number.set_value
+          target:
+            entity_id:
+              - number.solarflow_800_pro_output_limit
+              - number.solarflow_800_pro_input_limit
+          data:
+            value: 0
+
+        # Sync helpers
+        - service: input_number.set_value
+          target:
+            entity_id:
+              - input_number.solarflow_discharge_last
+              - input_number.solarflow_charge_last
+          data:
+            value: 0
+
+        - service: system_log.write
+          data:
+            level: debug
+            logger: solarflow_grid_control
+            message: >
+              "🛑 NIGHT CHARGE STOP: soc={{ soc }}% (>= 90% or not in charge window)"

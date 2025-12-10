@@ -1,0 +1,68 @@
+# ============================================================================
+# NIGHT: Force SolarFlow idle (23:00 - 08:00)
+# ============================================================================
+
+- id: solarflow_night_idle
+  alias: "SolarFlow – Night Idle (23:00–08:00)"
+  description: "Keep SolarFlow completely idle during night hours"
+  mode: restart
+
+  trigger:
+    # Safety enforcement every 10 minutes while night
+    - platform: time_pattern
+      minutes: "/10"
+      id: periodic_check
+
+    # Ensure correct state after HA restart
+    - platform: homeassistant
+      event: start
+      id: ha_startup
+
+    # Immediate hard edge at 23:00
+    - platform: time
+      at: "23:00:00"
+      id: night_start
+
+    # Ensure immediate enforcement at night end too (handles manual edits)
+    - platform: time
+      at: "08:00:00"
+      id: night_end_check
+
+  condition:
+    # Active only during night window (spans midnight) using OR
+    - condition: or
+      conditions:
+        - condition: time
+          after: "23:00:00"
+        - condition: time
+          before: "08:00:00"
+
+  action:
+    # Set both limits to zero
+    - service: number.set_value
+      target:
+        entity_id:
+          - number.solarflow_800_pro_output_limit
+          - number.solarflow_800_pro_input_limit
+      data:
+        value: 0
+
+    # Keep the "last" helpers in sync to avoid immediate delta-trigger on day start
+    - service: input_number.set_value
+      target:
+        entity_id:
+          - input_number.solarflow_discharge_last
+          - input_number.solarflow_charge_last
+      data:
+        value: 0
+
+    # Lightweight debug message (debug-level)
+    - service: system_log.write
+      data:
+        level: debug
+        logger: solarflow_grid_control
+        message: "🌙 Night idle enforced. Discharge=0W, Charge=0W. Trigger: {{ trigger.id }}"
+
+# ============================================================================
+# DAY: Grid-zero controller (08:00 - 23:00)
+# ============================================================================

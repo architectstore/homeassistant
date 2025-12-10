@@ -1,0 +1,24 @@
+# ============================================================================
+# OPTIONAL DEBUG: Log setpoint changes (info level)
+# ============================================================================
+
+- id: solarflow_debug_command_timing
+  alias: "SolarFlow – Debug Command Timing (light)"
+  description: "Log when discharge/charge limits change"
+  mode: parallel
+  max: 5
+
+  trigger:
+    - platform: state
+      entity_id:
+        - number.solarflow_800_pro_output_limit
+        - number.solarflow_800_pro_input_limit
+      id: limit_changed
+
+  action:
+    - service: system_log.write
+      data:
+        level: info
+        logger: solarflow_grid_control
+        message: >
+          "📊 {{ trigger.to_state.name }} changed: {{ trigger.from_state.state }}W → {{ trigger.to_state.state }}W (trigger={{ trigger.id }})"
