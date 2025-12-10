@@ -187,6 +187,13 @@
             - condition: template
               value_template: "{{ delta_dis | int >= min_delta or (last_discharge | int) == 0 }}"
           sequence:
+            # Ensure AC mode is OUTPUT so discharging actually works
+            - service: select.select_option
+              target:
+                entity_id: select.solarflow_800_pro_ac_mode
+              data:
+                option: "output"
+
             - service: number.set_value
               target:
                 entity_id: number.solarflow_800_pro_output_limit
@@ -228,6 +235,13 @@
             - condition: template
               value_template: "{{ delta_ch | int >= min_delta or (last_charge | int) == 0 }}"
           sequence:
+            # Ensure AC mode is INPUT so charging works
+            - service: select.select_option
+              target:
+                entity_id: select.solarflow_800_pro_ac_mode
+              data:
+                option: "input"
+
             - service: number.set_value
               target:
                 entity_id: number.solarflow_800_pro_input_limit
@@ -262,11 +276,13 @@
                   "STEP100 CHARGE: grid={{ grid }}W, soc={{ soc }}%, new={{ final_charge }}W,
                    last={{ last_charge }}W, delta={{ delta_ch }}W, trigger={{ trigger.id }}"
 
-      # DEFAULT: IDLE (both 0)
+      # DEFAULT: IDLE (both 0) – only when both targets are zero
       default:
         - condition: template
           value_template: >
-            {{ (last_discharge | int) != 0 or (last_charge | int) != 0 }}
+            {{ (final_discharge | int) == 0
+               and (final_charge | int) == 0
+               and ((last_discharge | int) != 0 or (last_charge | int) != 0) }}
 
         - service: number.set_value
           target:
@@ -291,3 +307,4 @@
             logger: solarflow_grid_control
             message: >
               "STEP100 IDLE: grid={{ grid }}W, soc={{ soc }}%, trigger={{ trigger.id }}"
+
