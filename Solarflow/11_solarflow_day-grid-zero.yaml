@@ -6,20 +6,22 @@
   alias: "SolarFlow – Daytime 100W Step Control"
   description: >
     Charge in 100W steps starting at 150W surplus. Uses last_charge helper
-    to prevent oscillation after each step. Fast emergency stop on import.
+    to prevent oscillation after each step. Fast emergency stop only on
+    large import (e.g. toaster), not on small imports.
   mode: restart
 
   trigger:
-    # FAST: large import -> stop charging immediately
+    # FAST: large import -> stop charging quickly (toaster, big load)
     - platform: numeric_state
       entity_id: sensor.shelly_phase_a_power
-      above: 100
+      above: 500            # importing > 500W
+      for: "00:00:05"       # sustained for 5 seconds
       id: fast_import
 
     # FAST: large export -> increase charge quickly
     - platform: numeric_state
       entity_id: sensor.shelly_phase_a_power
-      below: -400
+      below: -400           # exporting > 400W
       for: "00:00:10"
       id: fast_export
 
@@ -63,6 +65,7 @@
         soc_charge_max: "{{ states('input_number.solarflow_soc_charge_max') | float(90) | int }}"
 
         # Calculate raw band (what grid alone suggests, ignoring current state)
+        # Grid sign: + import, - export
         raw_band_step: >-
           {% if soc >= soc_charge_max %}
             0
@@ -98,27 +101,24 @@
           {% if soc >= soc_charge_max %}
             0
 
-          {# CASE 2: Emergency stop if importing significantly #}
-          {% elif g > 100 %}
-            0
-
-          {# CASE 3: Raw band suggests HIGHER power than current → increase step #}
+          {# CASE 2: Raw band suggests HIGHER power than current → increase step #}
           {% elif rbp > lc %}
             {{ rbp }}
 
-          {# CASE 4: Raw band suggests LOWER power but we're still exporting a bit → keep current #}
+          {# CASE 3: Raw band suggests LOWER power but we're still exporting a bit → keep current #}
           {% elif rbp < lc and g < -50 %}
             {{ lc }}
 
-          {# CASE 5: Raw band lower and grid near zero or importing lightly → step down #}
+          {# CASE 4: Raw band lower and grid near zero or importing lightly → step down #}
           {% elif rbp < lc %}
             {{ rbp }}
 
-          {# CASE 6: Raw band equals current → keep #}
+          {# CASE 5: Band equals current → keep #}
           {% else %}
             {{ lc }}
           {% endif %}
 
+        # Size of change vs last command
         delta_ch: "{{ (desired_power | int) - (last_charge | int) | abs }}"
 
     - choose:
@@ -162,8 +162,8 @@
                 logger: solarflow_grid_control
                 message: >
                   "STEP100: grid={{ grid }}W, soc={{ soc }}%, last={{ last_charge }}W,
-                   raw_band={{ raw_band_power }}W, desired={{ desired_power }}W, delta={{ delta_ch }}W,
-                   trigger={{ trigger.id }}"
+                   raw_band={{ raw_band_power }}W, desired={{ desired_power }}W,
+                   delta={{ delta_ch }}W, trigger={{ trigger.id }}"
 
       default:
         # No meaningful change → do nothing
