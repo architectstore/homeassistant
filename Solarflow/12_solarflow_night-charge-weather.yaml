@@ -1,43 +1,34 @@
 # ============================================================================
-# NIGHT: Force SolarFlow night charge cloudy (23:00 - 08:00)
+# NIGHT: Force SolarFlow night charge if tomorrow cloud_coverage > threshold (23:00–08:00)
 # ============================================================================
 
-
 - id: solarflow_night_charge_cloudy
-  alias: "SolarFlow – Night Charge if Tomorrow Cloudy (23:00–08:00)"
+  alias: "SolarFlow – Night Charge if Tomorrow Cloud Coverage Exceeds Threshold (23:00–08:00)"
   description: >
     Charge SolarFlow from the grid at 1000 W during night hours when SoC
-    is low, but only if tomorrow's forecast is cloudy.
+    is low, but only if tomorrow's forecast cloud_coverage exceeds the threshold.
   mode: restart
 
   trigger:
-    # Periodic safety enforcement during night
     - platform: time_pattern
       minutes: "/10"
       id: periodic_check
-
-    # React to SoC changes
     - platform: state
       entity_id: sensor.solarflow_800_pro_electric_level
       for: "00:00:20"
       id: soc_change
-
-    # Hard edges at night start/end
     - platform: time
       at: "23:00:00"
       id: night_start
-
     - platform: time
       at: "08:00:00"
       id: night_end_check
-
-    # Ensure correct state after HA restart
     - platform: homeassistant
       event: start
       id: ha_startup
 
   condition:
-    # Only active during night (spans midnight)
+    # Night window 23:00–08:00
     - condition: or
       conditions:
         - condition: time
@@ -45,88 +36,108 @@
         - condition: time
           before: "08:00:00"
 
-    # SoC sensor must be valid
+    # Required entities must be valid
     - condition: template
       value_template: >
         {{ states('sensor.solarflow_800_pro_electric_level') not in ['unknown','unavailable'] }}
-
-    # Numbers must be valid
     - condition: template
       value_template: >
         {{ states('number.solarflow_800_pro_output_limit') not in ['unknown','unavailable']
            and states('number.solarflow_800_pro_input_limit') not in ['unknown','unavailable'] }}
 
-    # Only charge if tomorrow is cloudy (daily forecast index 0)
+    # Only run if tomorrow's cloud_coverage > threshold
     - condition: template
       value_template: >
-        {% set fc = state_attr('weather.oeiras', 'forecast') %}
-        {{ fc is not none
-           and fc | length > 0
-           and fc[0].condition in ['cloudy', 'partlycloudy', 'rainy', 'pouring'] }}
+        {% set threshold = states('input_number.solarflow_cloud_threshold') | float(5) %}
+        {% set fc = state_attr('weather.forecast_home', 'forecast') %}
+        {% if fc is not none and fc|length > 0 %}
+          {% set t = fc[1] if fc|length > 1 else fc[0] %}
+          {{ t.cloud_coverage | float(0) > threshold }}
+        {% else %}
+          false
+        {% endif %}
 
   action:
     - variables:
         soc: "{{ states('sensor.solarflow_800_pro_electric_level') | float(50) }}"
         last_charge: "{{ states('input_number.solarflow_charge_last') | float(0) }}"
-        # Start charging if SoC < 50 %.
-        # Keep charging until 90 % once started (hysteresis via last_charge > 0).
+        charge_power: 1000
+        threshold: "{{ states('input_number.solarflow_cloud_threshold') | float(5) }}"
+
+        # Forecast for tomorrow (or {} if missing)
+        tomorrow_fc: >
+          {% set fc = state_attr('weather.forecast_home', 'forecast') %}
+          {% if fc is not none and fc|length > 0 %}
+            {{ fc[1] if fc|length > 1 else fc[0] }}
+          {% else %}
+            {{ dict() }}
+          {% endif %}
+
+        # Numeric cloud_coverage for tomorrow, 0 if missing
+        tomorrow_cloud_coverage: >
+          {% if tomorrow_fc is mapping and 'cloud_coverage' in tomorrow_fc %}
+            {{ tomorrow_fc.cloud_coverage | float(0) }}
+          {% else %}
+            0
+          {% endif %}
+
+        # SoC-based decision: charge below 90%, and either SoC<50 or already charging
         should_charge: >
           {{ soc < 90 and (soc < 50 or last_charge > 0) }}
-        charge_power: 1000   # W
 
     - choose:
-        # ----------------------
-        # BRANCH: CHARGE ACTIVE
-        # ----------------------
         - conditions:
             - condition: template
               value_template: "{{ should_charge }}"
           sequence:
-            # Ensure no discharge
+            # Ensure AC mode is INPUT so charging works
+            - service: select.select_option
+              target:
+                entity_id: select.solarflow_800_pro_ac_mode
+              data:
+                option: "input"
+
+            # Stop discharge, enable AC charge at 1000 W
             - service: number.set_value
               target:
                 entity_id: number.solarflow_800_pro_output_limit
               data:
                 value: 0
-
-            # Charge at 1000 W
             - service: number.set_value
               target:
                 entity_id: number.solarflow_800_pro_input_limit
               data:
                 value: "{{ charge_power }}"
-
-            # Sync helpers
             - service: input_number.set_value
               target:
                 entity_id: input_number.solarflow_discharge_last
               data:
                 value: 0
-
             - service: input_number.set_value
               target:
                 entity_id: input_number.solarflow_charge_last
               data:
                 value: "{{ charge_power }}"
-
-            # Log
             - service: system_log.write
               data:
                 level: debug
                 logger: solarflow_grid_control
                 message: >
-                  "🌙 NIGHT CHARGE CLOUDY: {{ charge_power }}W | soc={{ soc }}% (last={{ last_charge }}W)"
+                  🌙 NIGHT CHARGE: {{ charge_power }}W | soc={{ soc }}% (last={{ last_charge }}W)
+                  | cloud_coverage={{ tomorrow_cloud_coverage }}
+                  | threshold={{ threshold }}
 
-      # ----------------------
-      # DEFAULT: STOP CHARGING
-      # ----------------------
       default:
-        # Stop only if we were previously charging (avoid spam)
         - condition: template
-          value_template: >
-            {{ (last_charge | int) != 0 }}
+          value_template: "{{ (last_charge | int) != 0 }}"
 
-        # Set both limits to zero
+        # Switch back to OUTPUT so daytime discharge works as expected
+        - service: select.select_option
+          target:
+            entity_id: select.solarflow_800_pro_ac_mode
+          data:
+            option: "output"
+
         - service: number.set_value
           target:
             entity_id:
@@ -135,7 +146,6 @@
           data:
             value: 0
 
-        # Sync helpers
         - service: input_number.set_value
           target:
             entity_id:
@@ -149,4 +159,5 @@
             level: debug
             logger: solarflow_grid_control
             message: >
-              "🛑 NIGHT CHARGE CLOUDY STOP: soc={{ soc }}% (>= 90% or forecast not cloudy)"
+              🛑 NIGHT CHARGE STOP: soc={{ soc }}%
+              (>=90% or cloud_coverage <= {{ threshold }})

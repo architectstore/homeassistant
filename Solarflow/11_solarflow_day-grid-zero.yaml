@@ -150,19 +150,29 @@
         # Enforce mutual exclusivity: if importing, prefer discharge;
         # if exporting, prefer charge; near zero -> both 0.
         final_discharge: >-
-          {% if grid > -150 %}
+          {# If we were discharging, always try to fix with discharge first,
+             even if grid goes negative #}
+          {% if last_discharge | int > 0 %}
+            {{ target_discharge | int }}
+          {% elif grid > -150 %}
             {{ target_discharge | int }}
           {% else %}
             0
           {% endif %}
 
-
         final_charge: >-
-          {% if grid < -150 %}
+          {# Only allow charge when:
+             - strong export (< -150W),
+             - we are NOT discharging,
+             - and we are in the daylight window (sunrise+30m .. sunset-30m) #}
+          {% set sun = states.sun.sun %}
+          {% set can_daycharge = (sun == 'above_horizon') %}
+          {% if grid < -150 and (last_discharge | int) == 0 and can_daycharge %}
             {{ target_charge | int }}
           {% else %}
             0
           {% endif %}
+
 
         delta_dis: "{{ (final_discharge | int) - (last_discharge | int) | abs }}"
         delta_ch:  "{{ (final_charge    | int) - (last_charge    | int) | abs }}"
@@ -222,6 +232,12 @@
               value_template: "{{ final_charge | int > 0 }}"
             - condition: template
               value_template: "{{ delta_ch | int >= min_delta or (last_charge | int) == 0 }}"
+            - condition: sun
+              after: sunrise
+              after_offset: "00:30:00"
+            - condition: sun
+              before: sunset
+              before_offset: "-00:30:00"
           sequence:
             # Ensure AC mode is INPUT so charging works
             - service: select.select_option
