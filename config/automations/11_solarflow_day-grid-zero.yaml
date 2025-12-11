@@ -12,14 +12,14 @@
   trigger:
     # Import side (want discharge)
     - platform: numeric_state
-      entity_id: sensor.shelly_phase_a_power
+      entity_id: sensor.shelly_phase_a_power_smoothed
       above: 150          # importing >150W
       for: "00:00:10"
       id: import_high
 
     # Export side (want charge)
     - platform: numeric_state
-      entity_id: sensor.shelly_phase_a_power
+      entity_id: sensor.shelly_phase_a_power_smoothed
       below: -150         # exporting >150W
       for: "00:00:10"
       id: export_high
@@ -51,7 +51,7 @@
         {{ states('sensor.solarflow_800_pro_electric_level') not in ['unknown','unavailable'] }}
     - condition: template
       value_template: >
-        {{ states('sensor.shelly_phase_a_power') not in ['unknown','unavailable'] }}
+        {{ states('sensor.shelly_phase_a_power_smoothed') not in ['unknown','unavailable'] }}
     - condition: template
       value_template: >
         {{ states('number.solarflow_800_pro_output_limit') not in ['unknown','unavailable']
@@ -59,7 +59,7 @@
 
   action:
     - variables:
-        grid: "{{ states('sensor.shelly_phase_a_power') | float(0) }}"
+        grid: "{{ states('sensor.shelly_phase_a_power_smoothed') | float(0) }}"
         soc: "{{ states('sensor.solarflow_800_pro_electric_level') | float(50) }}"
         last_discharge: "{{ states('input_number.solarflow_discharge_last') | float(0) | int }}"
         last_charge: "{{ states('input_number.solarflow_charge_last') | float(0) | int }}"
@@ -165,8 +165,9 @@
              - strong export (< -150W),
              - we are NOT discharging,
              - and we are in the daylight window (sunrise+30m .. sunset-30m) #}
-          {% set sun = states.sun.sun %}
-          {% set can_daycharge = (sun == 'above_horizon') %}
+          {% set sun_state = states('sun.sun') %}
+          {% set can_daycharge = (sun_state == 'above_horizon') %}
+
           {% if grid < -150 and (last_discharge | int) == 0 and can_daycharge %}
             {{ target_charge | int }}
           {% else %}
@@ -174,8 +175,8 @@
           {% endif %}
 
 
-        delta_dis: "{{ (final_discharge | int) - (last_discharge | int) | abs }}"
-        delta_ch:  "{{ (final_charge    | int) - (last_charge    | int) | abs }}"
+        delta_dis: "{{ ((final_discharge | int) - (last_discharge | int)) | abs }}"
+        delta_ch: "{{ ((final_charge | int) - (last_charge | int)) | abs }}"
 
     - choose:
         # BRANCH A: DISCHARGE

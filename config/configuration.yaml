@@ -1,0 +1,35 @@
+
+# Loads default set of integrations. Do not remove.
+default_config:
+
+# Load frontend themes from the themes folder
+frontend:
+  themes: !include_dir_merge_named themes
+
+automation: !include_dir_merge_list automations
+sensor: !include_dir_merge_list sensors
+template: !include_dir_merge_list templates
+
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+mqtt:
+  sensor:
+    - name: "Shelly Phase A Power"
+      unique_id: shelly_phase_a_power
+      state_topic: "shellypro3em-ece334eb846c/status/em:0"
+      value_template: "{{ value_json.a_act_power | float(0) }}"
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+
+input_number: !include helpers.yaml
+
+sensor:
+  - platform: filter
+    name: "Shelly Phase A Power (Smoothed)"
+    entity_id: sensor.shelly_phase_a_power
+    filters:
+      - filter: time_simple_moving_average
+        window_size: "00:00:05"  # 5-second average
+        precision: 1

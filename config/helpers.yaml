@@ -53,7 +53,7 @@ solarflow_soc_discharge_min:
   step: 1
   unit_of_measurement: "%"
   mode: slider
-  initial: 25
+  initial: 10
   icon: mdi:battery-arrow-down
   # Do not discharge below this SoC %.
   # Protects battery health. Default: 25 %.
@@ -65,7 +65,7 @@ solarflow_soc_charge_max:
   step: 1
   unit_of_measurement: "%"
   mode: slider
-  initial: 90
+  initial: 100
   icon: mdi:battery-arrow-up
   # Do not charge above this SoC %.
   # Protects battery health. Default: 90 %.
@@ -73,7 +73,7 @@ solarflow_soc_charge_max:
 solarflow_cloud_threshold:
   name: SolarFlow Cloud Threshold
   icon: mdi:weather-cloudy
-  initial: 5
+  initial: 4
   min: 1
   max: 10
   step: 0.1
