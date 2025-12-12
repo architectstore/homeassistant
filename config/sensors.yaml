@@ -1,8 +1,0 @@
-sensor:
-  - platform: filter
-    name: "Shelly Phase A Power (Smoothed)"
-    entity_id: sensor.shelly_phase_a_power
-    filters:
-      - filter: time_simple_moving_average
-        window_size: "00:00:05"  # 5-second average
-        precision: 1

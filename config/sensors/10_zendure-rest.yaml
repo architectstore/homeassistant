@@ -1,0 +1,23 @@
+- platform: rest
+  name: "Zendure Solarflow Raw"
+  resource: "http://192.168.50.56/properties/report"
+  scan_interval: 15
+  timeout: 5
+  value_template: "{{ value_json.messageId }}"
+  json_attributes:
+    - properties
+    - packData
+
+- platform: integration
+  source: sensor.zendure_output_pack_power
+  name: "Zendure Battery Charged Energy"
+  unit_prefix: k
+  round: 3
+  method: left
+
+- platform: integration
+  source: sensor.zendure_battery_input_power
+  name: "Zendure Battery Discharged Energy"
+  unit_prefix: k
+  round: 3
+  method: left
