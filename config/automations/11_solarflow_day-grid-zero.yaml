@@ -1,5 +1,5 @@
 # ============================================================================
-# DAY: Bidirectional 100W Grid-Zero (08:00 - 23:00)
+# DAY: Bidirectional 100W Grid-Zero (08:00 - 22:45)
 # ============================================================================
 
 - id: solarflow_day_grid_zero_step_100w
@@ -43,7 +43,7 @@
     # Daytime only
     - condition: time
       after: "08:00:00"
-      before: "23:00:00"
+      before: "22:45:00"
 
     # Entities available
     - condition: template
