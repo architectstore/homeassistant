@@ -13,20 +13,20 @@
     # Import side (want discharge)
     - platform: numeric_state
       entity_id: sensor.shelly_phase_a_power_smoothed
-      above: 150          # importing >150W
-      for: "00:00:10"
+      above: 100          # importing >150W
+      for: "00:00:05"
       id: import_high
 
     # Export side (want charge)
     - platform: numeric_state
       entity_id: sensor.shelly_phase_a_power_smoothed
-      below: -150         # exporting >150W
-      for: "00:00:10"
+      below: -100         # exporting >150W
+      for: "00:00:05"
       id: export_high
 
     # Periodic reevaluation
     - platform: time_pattern
-      minutes: "/3"
+      minutes: "/1"
       id: periodic
 
     # At day start
@@ -66,10 +66,10 @@
 
         soc_discharge_min: "{{ states('input_number.solarflow_soc_discharge_min') | float(25) | int }}"
         soc_charge_max: "{{ states('input_number.solarflow_soc_charge_max') | float(90) | int }}"
-        step_size: 100
+        step_size: 50
         max_discharge: 800
         max_charge: 1000
-        min_delta: 80      # threshold to actually send a command
+        min_delta: 40      # threshold to actually send a command
 
         # -------------------------
         # IMPORT → DISCHARGE target (based on load estimate)
@@ -108,44 +108,70 @@
         export_step: >-
           {% if soc >= soc_charge_max %}
             0
+          {% elif grid < -950 %}
+            20          {# 1000 W #}
           {% elif grid < -850 %}
-            8
+            18          {# 900 W #}
           {% elif grid < -750 %}
-            7
+            16          {# 800 W #}
           {% elif grid < -650 %}
-            6
+            14          {# 700 W #}
           {% elif grid < -550 %}
-            5
+            12          {# 600 W #}
           {% elif grid < -450 %}
-            4
+            10          {# 500 W #}
           {% elif grid < -350 %}
-            3
+            8           {# 400 W #}
           {% elif grid < -250 %}
-            2
+            6           {# 300 W #}
           {% elif grid < -150 %}
-            1
+            4           {# 200 W #}
+          {% elif grid < -100 %}
+            2           {# 100 W #}
           {% else %}
             0
           {% endif %}
 
+
         export_power: >-
-          {% set p = export_step | int * step_size %}
-          {% if p > max_charge %} {{ max_charge }} {% else %} {{ p }} {% endif %}
+          {% set p = (export_step | int) * step_size %}
+          {% if p > max_charge %}
+            {{ max_charge }}
+          {% else %}
+            {{ p }}
+          {% endif %}
 
         target_charge: >-
           {% set lc = last_charge | int %}
           {% set rbp = export_power | int %}
-          {% set g = grid %}
+          {% set g = grid | float %}
 
           {% if rbp > lc %}
-            {{ rbp }}          {# step up when surplus grows #}
-          {% elif rbp < lc and g < -50 %}
-            {{ lc }}           {# still exporting, keep current charge #}
+            {# Case 1: Surplus grew significantly (e.g., 200W table says charge, but we are only at 100W) #}
+            {{ rbp }}
+
+          {% elif g < -250 %}
+            {# Case 2a: BIG BOOST - Exporting >250W while already charging, jump 2 steps (100W) #}
+            {{ lc + (step_size * 2) }}
+
+          {% elif g < -150 %}
+            {# Case 2b: NORMAL BOOST - Exporting >150W while already charging, jump 1 step (50W) #}
+            {{ lc + step_size }}
+
+          {% elif rbp < lc and g < -80 %}
+            {# Case 3: Small export remains, hold steady (don't flap) #}
+            {{ lc }}
+
           {% elif rbp < lc %}
-            {{ rbp }}          {# surplus shrank, step down #}
+            {# Case 4: Surplus shrank significantly, step down #}
+            {{ rbp }}
+
           {% else %}
-            {{ lc }}           {# unchanged #}
+            {# Default: unchanged #}
+            {{ lc }}
+
           {% endif %}
+
 
         # Enforce mutual exclusivity: if importing, prefer discharge;
         # if exporting, prefer charge; near zero -> both 0.
@@ -161,17 +187,38 @@
           {% endif %}
 
         final_charge: >-
-          {# Only allow charge when:
-             - strong export (< -150W),
-             - we are NOT discharging,
-             - and we are in the daylight window (sunrise+30m .. sunset-30m) #}
+          {% set g = grid | float %}
+          {% set lc = last_charge | int %}
+          {% set tc = target_charge | int %}
           {% set sun_state = states('sun.sun') %}
           {% set can_daycharge = (sun_state == 'above_horizon') %}
 
-          {% if grid < -150 and (last_discharge | int) == 0 and can_daycharge %}
-            {{ target_charge | int }}
+          {# Band 1: strong export -> follow target_charge #}
+          {% if g < -100 and (last_discharge | int) == 0 and can_daycharge %}
+            {% set fc = tc %}
+
+          {# Band 2: around zero (-100 .. +100W) -> hold current charge #}
+          {% elif -100 <= g <= 100 %}
+            {% set fc = lc %}
+
+          {# Band 3: strong import -> reduce charging #}
           {% else %}
+            {# If we are charging heavily and start importing, step down instead of quitting #}
+            {% set reduced = lc - step_size %}
+            {% if reduced < 0 %}
+              {% set fc = 0 %}
+            {% else %}
+              {% set fc = reduced %}
+            {% endif %}
+          {% endif %}
+
+          {# HARD CLAMP to allowed range [0 .. max_charge] #}
+          {% if fc > max_charge %}
+            {{ max_charge }}
+          {% elif fc < 0 %}
             0
+          {% else %}
+            {{ fc }}
           {% endif %}
 
 
