@@ -176,15 +176,17 @@
         # Enforce mutual exclusivity: if importing, prefer discharge;
         # if exporting, prefer charge; near zero -> both 0.
         final_discharge: >-
-          {# If we were discharging, always try to fix with discharge first,
-             even if grid goes negative #}
-          {% if last_discharge | int > 0 %}
-            {{ target_discharge | int }}
-          {% elif grid > -150 %}
-            {{ target_discharge | int }}
+          {% set g = grid | float %}
+          {% set ld = last_discharge | int %}
+          {% set td = target_discharge | int %}
+
+          {# Only discharge on strong import, never when exporting #}
+          {% if g > 250 %}
+            {{ td }}           {# allow discharge controller #}
           {% else %}
-            0
+            0                  {# disable discharge when grid <= 250W #}
           {% endif %}
+
 
         final_charge: >-
           {% set g = grid | float %}
@@ -192,35 +194,42 @@
           {% set tc = target_charge | int %}
           {% set sun_state = states('sun.sun') %}
           {% set can_daycharge = (sun_state == 'above_horizon') %}
+          {% set max_ch = max_charge | int %}
+          {% set step = step_size | int %}
 
-          {# Band 1: strong export -> follow target_charge #}
-          {% if g < -100 and (last_discharge | int) == 0 and can_daycharge %}
+          {# 1) Export: follow target_charge (it already points up). #}
+          {% if g <= -80 and can_daycharge %}
             {% set fc = tc %}
 
-          {# Band 2: around zero (-100 .. +100W) -> hold current charge #}
-          {% elif -100 <= g <= 100 %}
+          {# 2) Near zero (-80..+80W): hold last charge, no cuts. #}
+          {% elif -80 < g < 80 %}
             {% set fc = lc %}
 
-          {# Band 3: strong import -> reduce charging #}
-          {% else %}
-            {# If we are charging heavily and start importing, step down instead of quitting #}
-            {% set reduced = lc - step_size %}
-            {% if reduced < 0 %}
+          {# 3) Small/medium import (+80..+250W): reduce gradually, not to 0. #}
+          {% elif 80 <= g <= 250 %}
+            {% set reduce = (g | int) %}
+            {% set raw = lc - reduce %}
+            {% if raw < 0 %}
               {% set fc = 0 %}
             {% else %}
-              {% set fc = reduced %}
+              {# round down to step_size #}
+              {% set steps = (raw // step) | int %}
+              {% set fc = (steps * step) | int %}
             {% endif %}
+
+          {# 4) Strong import (> +250W): safety, cut charging. #}
+          {% else %}
+            {% set fc = 0 %}
           {% endif %}
 
-          {# HARD CLAMP to allowed range [0 .. max_charge] #}
-          {% if fc > max_charge %}
-            {{ max_charge }}
-          {% elif fc < 0 %}
+          {# Clamp to [0..max_charge] #}
+          {% if fc < 0 %}
             0
+          {% elif fc > max_ch %}
+            {{ max_ch }}
           {% else %}
             {{ fc }}
           {% endif %}
-
 
         delta_dis: "{{ ((final_discharge | int) - (last_discharge | int)) | abs }}"
         delta_ch: "{{ ((final_charge | int) - (last_charge | int)) | abs }}"
