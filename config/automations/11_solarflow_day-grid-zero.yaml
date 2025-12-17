@@ -13,14 +13,14 @@
     # Import side (want discharge)
     - platform: numeric_state
       entity_id: sensor.shelly_phase_a_power_smoothed
-      above: 100          # importing >150W
+      above: 75          # importing >100W
       for: "00:00:05"
       id: import_high
 
     # Export side (want charge)
     - platform: numeric_state
       entity_id: sensor.shelly_phase_a_power_smoothed
-      below: -100         # exporting >150W
+      below: -75         # exporting >100W
       for: "00:00:05"
       id: export_high
 
@@ -76,29 +76,45 @@
         # -------------------------
         target_discharge: >-
           {% set ld = last_discharge | int %}
-          {% set g  = grid %}
+          {% set g = grid | float %}
           {% set soc_min = soc_discharge_min %}
+          {% set step = step_size | int %}
+          {% set maxd = max_discharge | int %}
 
           {% if soc <= soc_min %}
             0
-
-          {% elif (-20 <= g <= 50) %}
-            {# Grid already near target (+20W import band) -> keep current #}
-            {{ ld }}
-
           {% else %}
-            {# Approximate house load = current grid + current discharge #}
             {% set load_est = g + ld %}
-            {# Aim for about +20W import (no stable export) #}
-            {% set desired = load_est - 20 %}
-            {% if desired < 0 %}
-              {% set desired = 0 %}
+            {% set ideal = load_est - 50 %}
+            {% if ideal < 0 %}{% set ideal = 0 %}{% endif %}
+            {% if ideal > maxd %}{% set ideal = maxd %}{% endif %}
+
+            {# Fast reaction for big import spikes #}
+            {% if g > 800 %}
+              {{ ideal }}              {# jump directly (toaster etc.) #}
+            {% elif g > 400 %}
+              {# medium jump: max 3 steps per run (150 W) #}
+              {% set max_jump = step * 3 %}
+              {% if ideal > ld + max_jump %}
+                {{ ld + max_jump }}
+              {% elif ideal < ld - max_jump %}
+                {{ ld - max_jump }}
+              {% else %}
+                {{ ideal }}
+              {% endif %}
+            {% else %}
+              {# normal case: 1 step per run (50 W) #}
+              {% if ideal > ld + step %}
+                {{ ld + step }}
+              {% elif ideal < ld - step %}
+                {{ ld - step }}
+              {% else %}
+                {{ ideal }}
+              {% endif %}
             {% endif %}
-            {% set desired = [desired, max_discharge] | min %}
-            {# Round to nearest 100W step #}
-            {% set steps = ((desired + (step_size / 2)) // step_size) | int %}
-            {{ (steps * step_size) | int }}
           {% endif %}
+
+
 
 
 
@@ -172,19 +188,20 @@
 
           {% endif %}
 
-
-        # Enforce mutual exclusivity: if importing, prefer discharge;
-        # if exporting, prefer charge; near zero -> both 0.
         final_discharge: >-
           {% set g = grid | float %}
-          {% set ld = last_discharge | int %}
           {% set td = target_discharge | int %}
+          {% set ld = last_discharge | int %}
 
-          {# Only discharge on strong import, never when exporting #}
-          {% if g > 250 %}
-            {{ td }}           {# allow discharge controller #}
+          {# Strong import: follow target #}
+          {% if g > 120 %}
+            {{ td }}
+          {# Very low import or export for a while -> handled by triggers, not here #}
+          {% elif g < -50 %}
+            0
+          {# Keep last value in a wider deadband #}
           {% else %}
-            0                  {# disable discharge when grid <= 250W #}
+            {{ ld }}
           {% endif %}
 
 
