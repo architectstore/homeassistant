@@ -5,7 +5,7 @@
 - id: solarflow_night_charge_cloudy
   alias: "SolarFlow – Night Charge if Tomorrow Cloud Coverage Exceeds Threshold (23:00–08:00)"
   description: >
-    Charge SolarFlow from the grid at 600 W during night hours when SoC
+    Charge SolarFlow from the grid at 800 W during night hours when SoC
     is low, but only if tomorrow's forecast cloud_coverage exceeds the threshold.
   mode: restart
 
@@ -28,12 +28,9 @@
       id: ha_startup
 
   condition:
-    - condition: or
-      conditions:
-        - condition: time
-          after: "22:59:00"
-        - condition: time
-          before: "08:00:00"
+    - condition: time
+      after: "22:45:00"
+      before: "08:00:00"
 
     # Required entities must be valid
     - condition: template
@@ -60,7 +57,7 @@
     - variables:
         soc: "{{ states('sensor.solarflow_800_pro_electric_level') | float(50) }}"
         last_charge: "{{ states('input_number.solarflow_charge_last') | float(0) }}"
-        charge_power: 600
+        charge_power: 800
         threshold: "{{ states('input_number.solarflow_cloud_threshold') | float(5) }}"
 
         # Forecast for tomorrow (or {} if missing)
@@ -82,7 +79,7 @@
 
         # SoC-based decision: weather-based full night charge
         should_charge_weather: >
-          {{ soc < 90 and (soc < 50 or last_charge > 0) }}
+          {{ soc < 80 and (soc < 50 or last_charge > 0) }}
 
         # SoC-based decision for emergency charge when weather is good
         should_charge_emergency: >
@@ -172,9 +169,10 @@
                 value: "{{ charge_power }}"
 
             - wait_template: >
-                {{ states('sensor.solarflow_800_pro_electric_level') | float >= 50 }}
+                {{ states('sensor.solarflow_800_pro_electric_level') | float >= 40 }}
               timeout: "06:00:00"
               continue_on_timeout: true
+
 
             # stop charging once 50% is reached
             - service: select.select_option
