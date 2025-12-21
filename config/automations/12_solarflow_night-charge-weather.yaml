@@ -1,28 +1,39 @@
 # ============================================================================
-# NIGHT: Force SolarFlow night charge if tomorrow cloud_coverage > threshold (23:00–08:00)
+# NIGHT: Charge SolarFlow from grid when tomorrow PV forecast is low
+# Uses Forecast.Solar sensor.energy_production_tomorrow (kWh)
+#
+# Window: 22:45–08:00
+# - If PV forecast < 5 kWh AND SoC low -> charge at 800 W
+# - Emergency (helper-based + latched):
+#     start when soc <= input_number.solarflow_emergency_soc
+#     keep charging until soc >= input_number.solarflow_emergency_stop_soc
 # ============================================================================
 
-- id: solarflow_night_charge_cloudy
-  alias: "SolarFlow – Night Charge if Tomorrow Cloud Coverage Exceeds Threshold (23:00–08:00)"
+- id: solarflow_night_charge_low_pv_forecast
+  alias: "SolarFlow – Night Charge if Tomorrow PV Forecast < 5kWh (23:00–08:00)"
   description: >
-    Charge SolarFlow from the grid at 800 W during night hours when SoC
-    is low, but only if tomorrow's forecast cloud_coverage exceeds the threshold.
+    Charge SolarFlow from the grid at 800 W during night hours when tomorrow PV
+    estimate is low (<5 kWh). Emergency charge uses helper thresholds + hysteresis.
   mode: restart
 
   trigger:
     - platform: time_pattern
       minutes: "/10"
       id: periodic_check
+
     - platform: state
       entity_id: sensor.solarflow_800_pro_electric_level
       for: "00:00:20"
       id: soc_change
+
     - platform: time
       at: "22:45:00"
       id: night_start
+
     - platform: time
       at: "08:00:00"
       id: night_end_check
+
     - platform: homeassistant
       event: start
       id: ha_startup
@@ -32,68 +43,57 @@
       after: "22:45:00"
       before: "08:00:00"
 
-    # Required entities must be valid
     - condition: template
       value_template: >
-        {{ states('sensor.solarflow_800_pro_electric_level') not in ['unknown','unavailable'] }}
-    - condition: template
-      value_template: >
-        {{ states('number.solarflow_800_pro_output_limit') not in ['unknown','unavailable']
-           and states('number.solarflow_800_pro_input_limit') not in ['unknown','unavailable'] }}
+        {{ states('sensor.solarflow_800_pro_electric_level')
+           not in ['unknown','unavailable'] }}
 
-    # Only run if tomorrow's cloud_coverage > threshold
     - condition: template
       value_template: >
-        {% set threshold = states('input_number.solarflow_cloud_threshold') | float(5) %}
-        {% set fc = state_attr('weather.forecast_home', 'forecast') %}
-        {% if fc is not none and fc|length > 0 %}
-          {% set t = fc[1] if fc|length > 1 else fc[0] %}
-          {{ t.cloud_coverage | float(0) > threshold }}
-        {% else %}
-          false
-        {% endif %}
+        {{ states('number.solarflow_800_pro_output_limit')
+             not in ['unknown','unavailable']
+           and
+           states('number.solarflow_800_pro_input_limit')
+             not in ['unknown','unavailable'] }}
 
   action:
     - variables:
-        soc: "{{ states('sensor.solarflow_800_pro_electric_level') | float(50) }}"
-        last_charge: "{{ states('input_number.solarflow_charge_last') | float(0) }}"
+        soc: "{{ states('sensor.solarflow_800_pro_electric_level') | float(0) }}"
+        last_charge: "{{ states('input_number.solarflow_charge_last') | float(0) | int }}"
         charge_power: 800
-        threshold: "{{ states('input_number.solarflow_cloud_threshold') | float(5) }}"
 
-        # Forecast for tomorrow (or {} if missing)
-        tomorrow_fc: >
-          {% set fc = state_attr('weather.forecast_home', 'forecast') %}
-          {% if fc is not none and fc|length > 0 %}
-            {{ fc[1] if fc|length > 1 else fc[0] }}
-          {% else %}
-            {{ dict() }}
-          {% endif %}
+        pv_tomorrow_kwh: "{{ states('sensor.energy_production_tomorrow') | float(0) }}"
+        pv_threshold_kwh: 5
 
-        # Numeric cloud_coverage for tomorrow, 0 if missing
-        tomorrow_cloud_coverage: >
-          {% if tomorrow_fc is mapping and 'cloud_coverage' in tomorrow_fc %}
-            {{ tomorrow_fc.cloud_coverage | float(0) }}
-          {% else %}
-            0
-          {% endif %}
+        pv_forecast_available: >-
+          {{ states('sensor.energy_production_tomorrow')
+             not in ['unknown','unavailable','none',''] }}
 
-        # SoC-based decision: weather-based full night charge
-        should_charge_weather: >
-          {{ soc < 80 and (soc < 50 or last_charge > 0) }}
+        # Emergency thresholds from helpers
+        emergency_start_soc: "{{ states('input_number.solarflow_emergency_soc') | float(20) }}"
+        emergency_stop_soc: "{{ states('input_number.solarflow_emergency_stop_soc') | float(45) }}"
 
-        # SoC-based decision for emergency charge when weather is good
-        should_charge_emergency: >
-          {# only at very low SoC, and only if tomorrow is NOT cloudy enough #}
-          {{ soc < 15 and tomorrow_cloud_coverage <= threshold }}
+        # Night charge because tomorrow PV is low (same behavior as before)
+        should_charge_low_pv: >-
+          {{ pv_forecast_available
+             and (pv_tomorrow_kwh < pv_threshold_kwh)
+             and soc < 80
+             and (soc < 45 or last_charge > 0) }}
 
+        # Emergency hysteresis:
+        # - Start if soc <= emergency_start_soc
+        # - Keep charging if already charging (last_charge > 0)
+        # - Stop only once soc >= emergency_stop_soc
+        should_charge_emergency: >-
+          {{ (soc < emergency_stop_soc)
+             and (soc <= emergency_start_soc or last_charge > 0) }}
 
     - choose:
-        # 1) Weather-based night charge (existing behavior)
+
+        # 1) Charge because tomorrow PV forecast is low
         - conditions:
-            - condition: time
-              before: "22:59:00"
             - condition: template
-              value_template: "{{ should_charge_weather }}"
+              value_template: "{{ should_charge_low_pv }}"
           sequence:
             - service: select.select_option
               target:
@@ -130,10 +130,10 @@
                 level: debug
                 logger: solarflow_grid_control
                 message: >
-                  🌙 NIGHT CHARGE (WEATHER): {{ charge_power }}W | soc={{ soc }}%
-                  | cloud_coverage={{ tomorrow_cloud_coverage }} | threshold={{ threshold }}
+                  🌙 NIGHT CHARGE (LOW PV FORECAST): {{ charge_power }}W | soc={{ soc }}%
+                  | pv_tomorrow={{ pv_tomorrow_kwh }}kWh | threshold={{ pv_threshold_kwh }}kWh
 
-        # 2) NEW: Emergency low-SoC charge to 50% even if weather is good
+        # 2) Emergency charge (helper-based, latched)
         - conditions:
             - condition: template
               value_template: "{{ should_charge_emergency }}"
@@ -169,12 +169,10 @@
                 value: "{{ charge_power }}"
 
             - wait_template: >
-                {{ states('sensor.solarflow_800_pro_electric_level') | float >= 40 }}
+                {{ states('sensor.solarflow_800_pro_electric_level') | float(0) >= emergency_stop_soc }}
               timeout: "06:00:00"
               continue_on_timeout: true
 
-
-            # stop charging once 50% is reached
             - service: select.select_option
               target:
                 entity_id: select.solarflow_800_pro_ac_mode
@@ -202,9 +200,11 @@
                 level: debug
                 logger: solarflow_grid_control
                 message: >
-                  🌙 EMERGENCY NIGHT CHARGE: stopped at soc={{ states('sensor.solarflow_800_pro_electric_level') }}%
-                  (target 50%)
+                  🌙 EMERGENCY NIGHT CHARGE: stopped at soc={{
+                    states('sensor.solarflow_800_pro_electric_level')
+                  }}% (target {{ emergency_stop_soc }}%)
 
+      # 3) Default: ensure we are idle if we were charging before
       default:
         - condition: template
           value_template: "{{ (last_charge | int) != 0 }}"
@@ -232,6 +232,4 @@
             level: debug
             logger: solarflow_grid_control
             message: >
-              🛑 NIGHT CHARGE STOP: soc={{ soc }}%
-              (>=90% or cloud_coverage <= {{ threshold }})
-
+              🛑 NIGHT CHARGE STOP: soc={{ soc }}% (conditions not met)

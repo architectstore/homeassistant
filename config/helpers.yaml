@@ -79,3 +79,23 @@ solarflow_cloud_threshold:
   step: 0.1
   mode: box
   unit_of_measurement: ''
+
+solarflow_emergency_soc:
+  name: "SolarFlow Emergency Start SoC"
+  icon: mdi:battery-alert
+  initial: 20
+  min: 0
+  max: 100
+  step: 1
+  unit_of_measurement: "%"
+  mode: slider
+
+solarflow_emergency_stop_soc:
+  name: "SolarFlow Emergency Stop SoC"
+  icon: mdi:battery-check
+  initial: 45
+  min: 0
+  max: 100
+  step: 1
+  unit_of_measurement: "%"
+  mode: slider
