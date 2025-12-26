@@ -1,0 +1,7 @@
+- platform: integration
+  source: sensor.microinverters_power_ac_total
+  name: "Microinverters Solar Energy"
+  unique_id: microinverters_solar_energy
+  unit_prefix: k
+  round: 3
+  method: left

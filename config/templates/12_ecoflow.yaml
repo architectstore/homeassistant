@@ -1,0 +1,12 @@
+- sensor:
+    - name: "Microinverters Power AC Total"
+      unique_id: microinverters_power_ac_total
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      state: >
+        {{
+          states('sensor.stream_microinverter_dir_power_ac') | float(0)
+          +
+          states('sensor.stream_microinverter_esq_power_ac') | float(0)
+        }}
