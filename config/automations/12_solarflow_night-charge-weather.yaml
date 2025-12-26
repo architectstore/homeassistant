@@ -1,8 +1,8 @@
 # ============================================================================
-# NIGHT: Charge SolarFlow from grid when tomorrow PV forecast is low
-# Uses Forecast.Solar sensor.energy_production_tomorrow (kWh)
+# NIGHT: Charge SolarFlow from grid when today's PV forecast is low
+# Uses Forecast.Solar sensor.energy_production_today (kWh)
 #
-# Window: 22:45–08:00
+# Window: 02:00–08:00
 # - If PV forecast < 5 kWh AND SoC low -> charge at 800 W
 # - Emergency (helper-based + latched):
 #     start when soc <= input_number.solarflow_emergency_soc
@@ -10,9 +10,9 @@
 # ============================================================================
 
 - id: solarflow_night_charge_low_pv_forecast
-  alias: "SolarFlow – Night Charge if Tomorrow PV Forecast < 5kWh (23:00–08:00)"
+  alias: "SolarFlow – Charge at 02:00 if Today's PV Forecast < 5kWh (02:00–08:00)"
   description: >
-    Charge SolarFlow from the grid at 800 W during night hours when tomorrow PV
+    Charge SolarFlow from the grid at 800 W during 02:00–08:00 when today's PV
     estimate is low (<5 kWh). Emergency charge uses helper thresholds + hysteresis.
   mode: restart
 
@@ -27,12 +27,12 @@
       id: soc_change
 
     - platform: time
-      at: "22:45:00"
-      id: night_start
+      at: "02:00:00"
+      id: window_start
 
     - platform: time
       at: "08:00:00"
-      id: night_end_check
+      id: window_end_check
 
     - platform: homeassistant
       event: start
@@ -40,7 +40,7 @@
 
   condition:
     - condition: time
-      after: "22:45:00"
+      after: "02:00:00"
       before: "08:00:00"
 
     - condition: template
@@ -61,24 +61,26 @@
         soc: "{{ states('sensor.solarflow_800_pro_electric_level') | float(0) }}"
         last_charge: "{{ states('input_number.solarflow_charge_last') | float(0) | int }}"
         charge_power: 800
+        low_pv_soc_limit: "{{ states('input_number.solarflow_low_pv_soc_limit') | float(45) }}"
 
-        pv_tomorrow_kwh: "{{ states('sensor.energy_production_tomorrow') | float(0) }}"
-        pv_threshold_kwh: 5
+        # Use today's forecast (because at 02:00 it's already "today")
+        pv_today_kwh: "{{ states('sensor.energy_production_today') | float(0) }}"
+        pv_threshold_kwh: "{{ states('input_number.solarflow_pv_threshold_kwh') | float(5) }}"
 
         pv_forecast_available: >-
-          {{ states('sensor.energy_production_tomorrow')
+          {{ states('sensor.energy_production_today')
              not in ['unknown','unavailable','none',''] }}
 
         # Emergency thresholds from helpers
         emergency_start_soc: "{{ states('input_number.solarflow_emergency_soc') | float(20) }}"
         emergency_stop_soc: "{{ states('input_number.solarflow_emergency_stop_soc') | float(45) }}"
 
-        # Night charge because tomorrow PV is low (same behavior as before)
+        # Charge because today's PV is low
         should_charge_low_pv: >-
           {{ pv_forecast_available
-             and (pv_tomorrow_kwh < pv_threshold_kwh)
+             and (pv_today_kwh < pv_threshold_kwh)
              and soc < 80
-             and (soc < 45 or last_charge > 0) }}
+             and (soc < low_pv_soc_limit or last_charge > 0)
 
         # Emergency hysteresis:
         # - Start if soc <= emergency_start_soc
@@ -90,7 +92,7 @@
 
     - choose:
 
-        # 1) Charge because tomorrow PV forecast is low
+        # 1) Charge because today's PV forecast is low
         - conditions:
             - condition: template
               value_template: "{{ should_charge_low_pv }}"
@@ -130,8 +132,8 @@
                 level: debug
                 logger: solarflow_grid_control
                 message: >
-                  🌙 NIGHT CHARGE (LOW PV FORECAST): {{ charge_power }}W | soc={{ soc }}%
-                  | pv_tomorrow={{ pv_tomorrow_kwh }}kWh | threshold={{ pv_threshold_kwh }}kWh
+                  🌙 02:00 CHARGE (LOW PV TODAY): {{ charge_power }}W | soc={{ soc }}%
+                  | pv_today={{ pv_today_kwh }}kWh | threshold={{ pv_threshold_kwh }}kWh
 
         # 2) Emergency charge (helper-based, latched)
         - conditions:
@@ -200,7 +202,7 @@
                 level: debug
                 logger: solarflow_grid_control
                 message: >
-                  🌙 EMERGENCY NIGHT CHARGE: stopped at soc={{
+                  🌙 EMERGENCY CHARGE: stopped at soc={{
                     states('sensor.solarflow_800_pro_electric_level')
                   }}% (target {{ emergency_stop_soc }}%)
 
@@ -232,4 +234,4 @@
             level: debug
             logger: solarflow_grid_control
             message: >
-              🛑 NIGHT CHARGE STOP: soc={{ soc }}% (conditions not met)
+              🛑 WINDOW STOP: soc={{ soc }}% (conditions not met)
