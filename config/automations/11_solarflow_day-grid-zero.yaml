@@ -5,7 +5,7 @@
 # Goal:
 # - Keep Shelly Phase A around 0W using 100W steps.
 # - Run controller 08:00 -> 02:00 (cross-midnight).
-# - After 22:00: if SoC < 45% => force idle (no charge/discharge).
+# - After 22:00: if SoC <= 50% => force idle (no charge/discharge).
 # - Hard stop at 02:00 regardless of SoC.
 #
 # ============================================================================
@@ -14,7 +14,7 @@
   alias: "SolarFlow – Grid-Zero 100W Steps (08:00–02:00)"
   description: >
     Keep Shelly Phase A around 0W using step control.
-    Runs 08:00–02:00. After 22:00, stops if SoC < 45%.
+    Runs 08:00–02:00. After 22:00, forces IDLE if SoC is low.
   mode: restart
 
   trigger:
@@ -41,6 +41,11 @@
     - platform: time
       at: "08:00:00"
       id: day_start
+
+    # Enforce lock check exactly at 22:00
+    - platform: time
+      at: "22:00:00"
+      id: lock_check_2200
 
     # After HA restart
     - platform: homeassistant
@@ -80,10 +85,10 @@
         # --- policy knobs ---
         evening_soc_min: 50
 
-        # After 22:00, if SoC is low, force idle.
+        # After 22:00, if SoC is low, force idle (inclusive: <=)
         after_22_and_low_soc: >-
           {% set t = now().strftime('%H:%M:%S') %}
-          {{ (t >= '22:00:00') and (soc < evening_soc_min) }}
+          {{ (t >= '22:00:00') and (soc <= evening_soc_min) }}
 
         # --- tuning ---
         step_size: 50
@@ -238,7 +243,7 @@
     - choose:
 
         # ============================================================
-        # RULE: After 22:00 and SoC < 45% => force idle (no control)
+        # RULE: After 22:00 and SoC <= 50% => force idle (no control)
         # ============================================================
         - conditions:
             - condition: template
@@ -266,8 +271,11 @@
                 level: info
                 logger: solarflow_grid_control
                 message: >
-                  "STEP100 LOCKED: after 22:00 and SoC={{ soc }}% < {{ evening_soc_min }}% -> IDLE,
+                  "STEP100 LOCKED: after 22:00 and SoC={{ soc }}% <= {{ evening_soc_min }}% -> IDLE,
                   grid={{ grid }}W, trigger={{ trigger.id }}"
+
+            # Optional recommendation: prevent later branches from overriding in same run
+            - stop: "Locked after 22:00 due to low SoC"
 
         # BRANCH A: DISCHARGE
         - conditions:
