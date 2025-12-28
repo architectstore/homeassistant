@@ -78,9 +78,10 @@
         # Charge because today's PV is low
         should_charge_low_pv: >-
           {{ pv_forecast_available
-             and (pv_today_kwh < pv_threshold_kwh)
-             and soc < 80
-             and (soc < low_pv_soc_limit or last_charge > 0)
+            and (pv_today_kwh < pv_threshold_kwh)
+            and soc < 80
+            and (soc < low_pv_soc_limit or last_charge > 0) }}
+
 
         # Emergency hysteresis:
         # - Start if soc <= emergency_start_soc

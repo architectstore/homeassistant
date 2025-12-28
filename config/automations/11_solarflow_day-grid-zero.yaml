@@ -1,25 +1,34 @@
 # ============================================================================
-# DAY: Bidirectional 100W Grid-Zero (08:00 - 22:00)
+# GRID-ZERO: Bidirectional 100W steps (08:00 - 02:00) with SoC lock after 22:00
 # ============================================================================
+#
+# Goal:
+# - Keep Shelly Phase A around 0W using 100W steps.
+# - Run controller 08:00 -> 02:00 (cross-midnight).
+# - After 22:00: if SoC < 45% => force idle (no charge/discharge).
+# - Hard stop at 02:00 regardless of SoC.
+#
+# ============================================================================
+
 - id: solarflow_day_grid_zero_step_100w
-  alias: "SolarFlow – Daytime 100W Grid-Zero (Charge+Discharge)"
+  alias: "SolarFlow – Grid-Zero 100W Steps (08:00–02:00)"
   description: >
-    Keep Shelly Phase A around 0W using 100W steps.
-    Charges when exporting, discharges when importing.
+    Keep Shelly Phase A around 0W using step control.
+    Runs 08:00–02:00. After 22:00, stops if SoC < 45%.
   mode: restart
 
   trigger:
     # Import side (want discharge)
     - platform: numeric_state
       entity_id: sensor.shelly_phase_a_power_smoothed
-      above: 75          # importing >100W
+      above: 75
       for: "00:00:05"
       id: import_high
 
     # Export side (want charge)
     - platform: numeric_state
       entity_id: sensor.shelly_phase_a_power_smoothed
-      below: -75         # exporting >100W
+      below: -75
       for: "00:00:05"
       id: export_high
 
@@ -39,18 +48,21 @@
       id: ha_startup
 
   condition:
-    # Daytime only
-    - condition: time
-      after: "08:00:00"
-      before: "22:00:00"
+    # Window 08:00 -> 02:00 (cross-midnight)
+    - condition: template
+      value_template: >
+        {% set t = now().strftime('%H:%M:%S') %}
+        {{ (t >= '08:00:00') or (t < '02:00:00') }}
 
     # Entities available
     - condition: template
       value_template: >
         {{ states('sensor.solarflow_800_pro_electric_level') not in ['unknown','unavailable'] }}
+
     - condition: template
       value_template: >
         {{ states('sensor.shelly_phase_a_power_smoothed') not in ['unknown','unavailable'] }}
+
     - condition: template
       value_template: >
         {{ states('number.solarflow_800_pro_output_limit') not in ['unknown','unavailable']
@@ -62,16 +74,25 @@
         soc: "{{ states('sensor.solarflow_800_pro_electric_level') | float(50) }}"
         last_discharge: "{{ states('input_number.solarflow_discharge_last') | float(0) | int }}"
         last_charge: "{{ states('input_number.solarflow_charge_last') | float(0) | int }}"
-
         soc_discharge_min: "{{ states('input_number.solarflow_soc_discharge_min') | float(25) | int }}"
         soc_charge_max: "{{ states('input_number.solarflow_soc_charge_max') | float(90) | int }}"
+
+        # --- policy knobs ---
+        evening_soc_min: 50
+
+        # After 22:00, if SoC is low, force idle.
+        after_22_and_low_soc: >-
+          {% set t = now().strftime('%H:%M:%S') %}
+          {{ (t >= '22:00:00') and (soc < evening_soc_min) }}
+
+        # --- tuning ---
         step_size: 50
         max_discharge: 800
         max_charge: 1000
-        min_delta: 40      # threshold to actually send a command
+        min_delta: 40
 
         # -------------------------
-        # IMPORT → DISCHARGE target (based on load estimate)
+        # IMPORT → DISCHARGE target
         # -------------------------
         target_discharge: >-
           {% set ld = last_discharge | int %}
@@ -79,7 +100,6 @@
           {% set soc_min = soc_discharge_min %}
           {% set step = step_size | int %}
           {% set maxd = max_discharge | int %}
-
           {% if soc <= soc_min %}
             0
           {% else %}
@@ -88,11 +108,9 @@
             {% if ideal < 0 %}{% set ideal = 0 %}{% endif %}
             {% if ideal > maxd %}{% set ideal = maxd %}{% endif %}
 
-            {# Fast reaction for big import spikes #}
             {% if g > 800 %}
-              {{ ideal }}              {# jump directly (toaster etc.) #}
+              {{ ideal }}
             {% elif g > 400 %}
-              {# medium jump: max 3 steps per run (150 W) #}
               {% set max_jump = step * 3 %}
               {% if ideal > ld + max_jump %}
                 {{ ld + max_jump }}
@@ -102,7 +120,6 @@
                 {{ ideal }}
               {% endif %}
             {% else %}
-              {# normal case: 1 step per run (50 W) #}
               {% if ideal > ld + step %}
                 {{ ld + step }}
               {% elif ideal < ld - step %}
@@ -114,35 +131,34 @@
           {% endif %}
 
         # -------------------------
-        # EXPORT → CHARGE steps (unchanged)
+        # EXPORT → CHARGE steps
         # -------------------------
         export_step: >-
           {% if soc >= soc_charge_max %}
             0
           {% elif grid < -950 %}
-            20          {# 1000 W #}
+            20
           {% elif grid < -850 %}
-            18          {# 900 W #}
+            18
           {% elif grid < -750 %}
-            16          {# 800 W #}
+            16
           {% elif grid < -650 %}
-            14          {# 700 W #}
+            14
           {% elif grid < -550 %}
-            12          {# 600 W #}
+            12
           {% elif grid < -450 %}
-            10          {# 500 W #}
+            10
           {% elif grid < -350 %}
-            8           {# 400 W #}
+            8
           {% elif grid < -250 %}
-            6           {# 300 W #}
+            6
           {% elif grid < -150 %}
-            4           {# 200 W #}
+            4
           {% elif grid < -100 %}
-            2           {# 100 W #}
+            2
           {% else %}
             0
           {% endif %}
-
 
         export_power: >-
           {% set p = (export_step | int) * step_size %}
@@ -156,49 +172,31 @@
           {% set lc = last_charge | int %}
           {% set rbp = export_power | int %}
           {% set g = grid | float %}
-
           {% if rbp > lc %}
-            {# Case 1: Surplus grew significantly (e.g., 200W table says charge, but we are only at 100W) #}
             {{ rbp }}
-
           {% elif g < -250 %}
-            {# Case 2a: BIG BOOST - Exporting >250W while already charging, jump 2 steps (100W) #}
             {{ lc + (step_size * 2) }}
-
           {% elif g < -150 %}
-            {# Case 2b: NORMAL BOOST - Exporting >150W while already charging, jump 1 step (50W) #}
             {{ lc + step_size }}
-
           {% elif rbp < lc and g < -80 %}
-            {# Case 3: Small export remains, hold steady (don't flap) #}
             {{ lc }}
-
           {% elif rbp < lc %}
-            {# Case 4: Surplus shrank significantly, step down #}
             {{ rbp }}
-
           {% else %}
-            {# Default: unchanged #}
             {{ lc }}
-
           {% endif %}
 
         final_discharge: >-
           {% set g = grid | float %}
           {% set td = target_discharge | int %}
           {% set ld = last_discharge | int %}
-
-          {# Strong import: follow target #}
           {% if g > 120 %}
             {{ td }}
-          {# Very low import or export for a while -> handled by triggers, not here #}
           {% elif g < -50 %}
             0
-          {# Keep last value in a wider deadband #}
           {% else %}
             {{ ld }}
           {% endif %}
-
 
         final_charge: >-
           {% set g = grid | float %}
@@ -209,32 +207,23 @@
           {% set max_ch = max_charge | int %}
           {% set step = step_size | int %}
 
-          {# 1) Export: follow target_charge (it already points up). #}
           {% if g <= -80 and can_daycharge %}
             {% set fc = tc %}
-
-          {# 2) Near zero (-80..+80W): hold last charge, no cuts. #}
           {% elif -80 < g < 80 %}
             {% set fc = lc %}
-
-          {# 3) Small/medium import (+80..+250W): reduce gradually, not to 0. #}
           {% elif 80 <= g <= 250 %}
             {% set reduce = (g | int) %}
             {% set raw = lc - reduce %}
             {% if raw < 0 %}
               {% set fc = 0 %}
             {% else %}
-              {# round down to step_size #}
               {% set steps = (raw // step) | int %}
               {% set fc = (steps * step) | int %}
             {% endif %}
-
-          {# 4) Strong import (> +250W): safety, cut charging. #}
           {% else %}
             {% set fc = 0 %}
           {% endif %}
 
-          {# Clamp to [0..max_charge] #}
           {% if fc < 0 %}
             0
           {% elif fc > max_ch %}
@@ -247,6 +236,39 @@
         delta_ch: "{{ ((final_charge | int) - (last_charge | int)) | abs }}"
 
     - choose:
+
+        # ============================================================
+        # RULE: After 22:00 and SoC < 45% => force idle (no control)
+        # ============================================================
+        - conditions:
+            - condition: template
+              value_template: "{{ after_22_and_low_soc }}"
+          sequence:
+            - service: number.set_value
+              target:
+                entity_id:
+                  - number.solarflow_800_pro_output_limit
+                  - number.solarflow_800_pro_input_limit
+              data:
+                value: 0
+              continue_on_error: false
+
+            - service: input_number.set_value
+              target:
+                entity_id:
+                  - input_number.solarflow_discharge_last
+                  - input_number.solarflow_charge_last
+              data:
+                value: 0
+
+            - service: system_log.write
+              data:
+                level: info
+                logger: solarflow_grid_control
+                message: >
+                  "STEP100 LOCKED: after 22:00 and SoC={{ soc }}% < {{ evening_soc_min }}% -> IDLE,
+                  grid={{ grid }}W, trigger={{ trigger.id }}"
+
         # BRANCH A: DISCHARGE
         - conditions:
             - condition: template
@@ -254,7 +276,6 @@
             - condition: template
               value_template: "{{ delta_dis | int >= min_delta or (last_discharge | int) == 0 }}"
           sequence:
-            # Ensure AC mode is OUTPUT so discharging actually works
             - service: select.select_option
               target:
                 entity_id: select.solarflow_800_pro_ac_mode
@@ -293,7 +314,7 @@
                 logger: solarflow_grid_control
                 message: >
                   "STEP100 DISCH: grid={{ grid }}W, soc={{ soc }}%, new={{ final_discharge }}W,
-                   last={{ last_discharge }}W, delta={{ delta_dis }}W, trigger={{ trigger.id }}"
+                  last={{ last_discharge }}W, delta={{ delta_dis }}W, trigger={{ trigger.id }}"
 
         # BRANCH B: CHARGE
         - conditions:
@@ -308,7 +329,6 @@
               before: sunset
               before_offset: "-00:30:00"
           sequence:
-            # Ensure AC mode is INPUT so charging works
             - service: select.select_option
               target:
                 entity_id: select.solarflow_800_pro_ac_mode
@@ -347,10 +367,10 @@
                 logger: solarflow_grid_control
                 message: >
                   "STEP100 CHARGE: grid={{ grid }}W, soc={{ soc }}%, new={{ final_charge }}W,
-                   last={{ last_charge }}W, delta={{ delta_ch }}W, trigger={{ trigger.id }}"
+                  last={{ last_charge }}W, delta={{ delta_ch }}W, trigger={{ trigger.id }}"
 
-      # DEFAULT: IDLE (both 0) – only when both targets are zero
       default:
+        # DEFAULT: IDLE (both 0) – only when both targets are zero
         - condition: template
           value_template: >
             {{ (final_discharge | int) == 0
@@ -381,18 +401,24 @@
             message: >
               "STEP100 IDLE: grid={{ grid }}W, soc={{ soc }}%, trigger={{ trigger.id }}"
 
-- id: solarflow_day_end_reset
-  alias: "SolarFlow – Day End Reset (22:00)"
+
+# ============================================================================
+# HARD STOP at 02:00 (no matter what)
+# ============================================================================
+
+- id: solarflow_grid_zero_hard_stop_0200
+  alias: "SolarFlow – Grid-Zero Hard Stop (02:00)"
   trigger:
     - platform: time
-      at: "22:00:00"
+      at: "02:00:00"
   condition: []
   action:
     - service: select.select_option
       target:
         entity_id: select.solarflow_800_pro_ac_mode
       data:
-        option: "output"        # or "idle" if you prefer, but output+0W is fine
+        option: "output"
+
     - service: number.set_value
       target:
         entity_id:
@@ -400,6 +426,8 @@
           - number.solarflow_800_pro_input_limit
       data:
         value: 0
+      continue_on_error: false
+
     - service: input_number.set_value
       target:
         entity_id:
