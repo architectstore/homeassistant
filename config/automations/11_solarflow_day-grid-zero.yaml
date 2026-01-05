@@ -1,20 +1,25 @@
 # ============================================================================
-# GRID-ZERO: Bidirectional 100W steps (08:00 - 02:00) with SoC lock after 22:00
+# GRID-ZERO: Bidirectional 100W steps (07:00* - 03:00) with SoC lock after 22:00
+# *Starts at 07:00 only if SoC >= 75%, otherwise starts at 08:00 as usual.
 # ============================================================================
 #
-# Goal:
-# - Keep Shelly Phase A around 0W using 100W steps.
-# - Run controller 08:00 -> 02:00 (cross-midnight).
-# - After 22:00: if SoC <= 50% => force idle (no charge/discharge).
-# - Hard stop at 02:00 regardless of SoC.
+# Changes merged:
+# - Add 07:00 trigger so it can start immediately.
+# - Window opens at 07:00 instead of 08:00.
+# - Extra condition: during 07:00–08:00 require SoC >= 75; after 08:00 always allowed.
+# - Optional safety automation: at 07:00 if SoC < 75 force IDLE (limits=0) so nothing is left running.
 #
 # ============================================================================
 
+# ----------------------------------------------------------------------------
+# MAIN GRID-ZERO CONTROLLER
+# ----------------------------------------------------------------------------
 - id: solarflow_day_grid_zero_step_100w
-  alias: "SolarFlow – Grid-Zero 100W Steps (08:00–02:00)"
+  alias: "SolarFlow – Grid-Zero 100W Steps (07:00–03:00; 07:00 requires SoC>=75)"
   description: >
     Keep Shelly Phase A around 0W using step control.
-    Runs 08:00–02:00. After 22:00, forces IDLE if SoC is low.
+    Runs 07:00–03:00 (cross-midnight). Between 07:00–08:00 it runs only if SoC >= 75%.
+    After 08:00 it runs regardless of SoC. After 22:00, forces IDLE if SoC is low.
   mode: restart
 
   trigger:
@@ -37,7 +42,12 @@
       minutes: "/1"
       id: periodic
 
-    # At day start
+    # Early start evaluation
+    - platform: time
+      at: "07:00:00"
+      id: early_start_0700
+
+    # Normal day start
     - platform: time
       at: "08:00:00"
       id: day_start
@@ -53,11 +63,19 @@
       id: ha_startup
 
   condition:
-    # Window 08:00 -> 02:00 (cross-midnight)
+    # Window 07:00 -> 03:00 (cross-midnight)
     - condition: template
       value_template: >
         {% set t = now().strftime('%H:%M:%S') %}
-        {{ (t >= '08:00:00') or (t < '02:00:00') }}
+        {{ (t >= '07:00:00') or (t < '03:00:00') }}
+
+    # Gate ONLY the early hour 07:00–08:00: require SoC >= 75
+    # After 08:00 always allowed (regardless of SoC).
+    - condition: template
+      value_template: >
+        {% set t = now().strftime('%H:%M:%S') %}
+        {% set soc = states('sensor.solarflow_800_pro_electric_level') | float(0) %}
+        {{ (t >= '08:00:00') or (t < '07:00:00') or (soc >= 75) }}
 
     # Entities available
     - condition: template
@@ -112,7 +130,6 @@
             {% set ideal = load_est - 50 %}
             {% if ideal < 0 %}{% set ideal = 0 %}{% endif %}
             {% if ideal > maxd %}{% set ideal = maxd %}{% endif %}
-
             {% if g > 800 %}
               {{ ideal }}
             {% elif g > 400 %}
@@ -211,7 +228,6 @@
           {% set can_daycharge = (sun_state == 'above_horizon') %}
           {% set max_ch = max_charge | int %}
           {% set step = step_size | int %}
-
           {% if g <= -80 and can_daycharge %}
             {% set fc = tc %}
           {% elif -80 < g < 80 %}
@@ -228,7 +244,6 @@
           {% else %}
             {% set fc = 0 %}
           {% endif %}
-
           {% if fc < 0 %}
             0
           {% elif fc > max_ch %}
@@ -241,7 +256,6 @@
         delta_ch: "{{ ((final_charge | int) - (last_charge | int)) | abs }}"
 
     - choose:
-
         # ============================================================
         # RULE: After 22:00 and SoC <= 50% => force idle (no control)
         # ============================================================
@@ -274,7 +288,6 @@
                   "STEP100 LOCKED: after 22:00 and SoC={{ soc }}% <= {{ evening_soc_min }}% -> IDLE,
                   grid={{ grid }}W, trigger={{ trigger.id }}"
 
-            # Optional recommendation: prevent later branches from overriding in same run
             - stop: "Locked after 22:00 due to low SoC"
 
         # BRANCH A: DISCHARGE
@@ -409,16 +422,45 @@
             message: >
               "STEP100 IDLE: grid={{ grid }}W, soc={{ soc }}%, trigger={{ trigger.id }}"
 
-
-# ============================================================================
-# HARD STOP at 02:00 (no matter what)
-# ============================================================================
-
-- id: solarflow_grid_zero_hard_stop_0200
-  alias: "SolarFlow – Grid-Zero Hard Stop (02:00)"
+# ----------------------------------------------------------------------------
+# OPTIONAL: Safety idle at 07:00 if SoC < 75 (keeps 07:00–08:00 clean/idle)
+# ----------------------------------------------------------------------------
+- id: solarflow_grid_zero_idle_if_low_soc_0700
+  alias: "SolarFlow – Idle at 07:00 if SoC < 75"
+  mode: single
   trigger:
     - platform: time
-      at: "02:00:00"
+      at: "07:00:05"
+  condition:
+    - condition: numeric_state
+      entity_id: sensor.solarflow_800_pro_electric_level
+      below: 75
+  action:
+    - service: number.set_value
+      target:
+        entity_id:
+          - number.solarflow_800_pro_output_limit
+          - number.solarflow_800_pro_input_limit
+      data:
+        value: 0
+      continue_on_error: false
+
+    - service: input_number.set_value
+      target:
+        entity_id:
+          - input_number.solarflow_discharge_last
+          - input_number.solarflow_charge_last
+      data:
+        value: 0
+
+# ----------------------------------------------------------------------------
+# HARD STOP at 03:00 (no matter what)
+# ----------------------------------------------------------------------------
+- id: solarflow_grid_zero_hard_stop_0200
+  alias: "SolarFlow – Grid-Zero Hard Stop (03:00)"
+  trigger:
+    - platform: time
+      at: "03:00:00"
   condition: []
   action:
     - service: select.select_option
