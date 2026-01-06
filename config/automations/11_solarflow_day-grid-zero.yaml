@@ -21,6 +21,8 @@
     Runs 07:00–03:00 (cross-midnight). Between 07:00–08:00 it runs only if SoC >= 75%.
     After 08:00 it runs regardless of SoC. After 22:00, forces IDLE if SoC is low.
   mode: restart
+  trace:
+    stored_traces: 720  # ~12h if it triggers every minute
 
   trigger:
     # Import side (want discharge)
