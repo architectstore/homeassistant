@@ -1,0 +1,12 @@
+- alias: Garagem - Agua no sensor
+  description: "Notify when water leak is detected in the garage"
+  trigger:
+    - trigger: state
+      entity_id: binary_sensor.water_leak_sensor_garage
+      to: "on"
+  action:
+    - action: notify.mobile_app_fcp_n49
+      data:
+        title: "Alerta: Agua na Garagem"
+        message: "Detetada água acima do nivel ({{ now().strftime('%H:%M') }})."
+  mode: single

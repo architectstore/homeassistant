@@ -1,0 +1,16 @@
+- alias: Garagem aberta
+  description: ""
+  trigger:
+    - trigger: state
+      entity_id: binary_sensor.motion_garage
+      to: "off"
+      for: "00:30:00"
+  condition:
+    - condition: state
+      entity_id: binary_sensor.gate_sensor_garage
+      state: "on"
+  action:
+    - action: notify.mobile_app_fcp_n49
+      data:
+        message: "Garagem aberta"
+  mode: single
