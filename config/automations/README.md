@@ -10,6 +10,7 @@ This directory contains the core logic for the SolarFlow energy management syste
 | `11_solarflow_day-grid-zero.yaml` | **Core Logic** | Dynamic output control to match home consumption (Grid Zero). |
 | `12_solarflow_night-charge-weather.yaml` | **Predictive** | Conditional grid charging based on tomorrow's solar forecast. |
 | `13_solarflow_night-charge.yaml` | **Scheduled** | Standard off-peak grid charging routines. |
+| `20_ev-charge.yaml` | **EV Integration** | Tuya EV charger night scheduling with safety checks. |
 | `19_solarflow_debug.yaml` | **Maintenance** | Logging and debugging tools for system troubleshooting. |
 
 ## ⚙️ Detailed Logic
@@ -40,6 +41,16 @@ This directory contains the core logic for the SolarFlow energy management syste
     *   Typically used to ensure a minimum SoC (e.g., 30%) for the morning peak before the sun rises.
     *   Controlled by `input_boolean.night_charge_enabled` in `../helpers.yaml`.
 
+#### `20_ev-charge.yaml` (EV Night Schedule)
+*   **Trigger:** 22:00 (night on), 08:00 (morning off).
+*   **Purpose:** Off-peak EV charging aligned with low tariffs.
+*   **Behavior:**
+    *   Controls `switch.ev_charger` (Tuya integration).
+    *   **Safety checks:** Connectivity (`binary_sensor.ev_charger_connectivity`), no faults (`binary_sensor.ev_charger_problem`).
+    *   Monitors `sensor.ev_charger_status`, `sensor.ev_charger_power` for notifications.
+    *   **Idempotent:** Only acts if state change needed (no redundant commands).
+    *   Logs power draw and status in persistent notifications.
+
 ### ☀️ Day Operations
 
 #### `11_solarflow_day-grid-zero.yaml`
@@ -63,3 +74,4 @@ This directory contains the core logic for the SolarFlow energy management syste
 These automations rely on entities defined in the parent directory:
 *   **Sensors (`../sensors.yaml`):** Requires real-time power consumption and battery SoC sensors.
 *   **Helpers (`../helpers.yaml`):** Uses input booleans to manually override automation logic (e.g., `maintenance_mode`).
+*   **EV Charger (`tuya.local`):** `switch.ev_charger`, `sensor.ev_charger_*`, `binary_sensor.ev_charger_*`.

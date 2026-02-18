@@ -1,0 +1,37 @@
+- id: 'ev_charger_night_schedule'
+  alias: "EV Charger - Night Schedule"
+  trigger:
+    - platform: time
+      at: "22:00:00"
+      id: 'night_on'
+    - platform: time
+      at: "08:00:00"
+      id: 'morning_off'
+  action:
+    - variables:
+        charger_switch: switch.ev_charger
+        desired_state: >-
+          {% if trigger.id == 'night_on' %}
+            on
+          {% elif trigger.id == 'morning_off' %}
+            off
+          {% else %}
+            on
+          {% endif %}
+        current_status: "{{ states('sensor.ev_charger_status') }}"
+        current_power: "{{ states('sensor.ev_charger_power') | float(0) }}"
+    - condition: template
+      value_template: >-
+        {{ is_state(charger_switch, 'off' if desired_state == 'on' else 'on') and 
+           states('binary_sensor.ev_charger_connectivity') == 'on' and
+           states('binary_sensor.ev_charger_problem') == 'off' }}
+    - service: "{{ 'switch.turn_on' if desired_state == 'on' else 'switch.turn_off' }}"
+      target:
+        entity_id: "{{ charger_switch }}"
+    - service: persistent_notification.create
+      data:
+        title: "EV Charger {{ desired_state | upper }}"
+        message: >-
+          Status: {{ current_status }} | Power: {{ current_power }}kW | 
+          Connectivity: {{ states('binary_sensor.ev_charger_connectivity') }}
+  mode: single
