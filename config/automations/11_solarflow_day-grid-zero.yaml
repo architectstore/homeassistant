@@ -1,5 +1,5 @@
 # ============================================================================
-# GRID-ZERO: Bidirectional 100W steps (07:00* - 03:00) with SoC lock after 22:00
+# GRID-ZERO: Bidirectional 100W steps (07:00* - 01:00) with SoC lock after 22:00
 # *Starts at 07:00 only if SoC >= 75%, otherwise starts at 08:00 as usual.
 # ============================================================================
 #
@@ -15,10 +15,10 @@
 # MAIN GRID-ZERO CONTROLLER
 # ----------------------------------------------------------------------------
 - id: solarflow_day_grid_zero_step_100w
-  alias: "SolarFlow – Grid-Zero 100W Steps (07:00–03:00; 07:00 requires SoC>=75)"
+  alias: "SolarFlow – Grid-Zero 100W Steps (07:00–01:00; 07:00 requires SoC>=75)"
   description: >
     Keep Shelly Phase A around 0W using step control.
-    Runs 07:00–03:00 (cross-midnight). Between 07:00–08:00 it runs only if SoC >= 75%.
+    Runs 07:00–01:00 (cross-midnight). Between 07:00–08:00 it runs only if SoC >= 75%.
     After 08:00 it runs regardless of SoC. After 22:00, forces IDLE if SoC is low.
   mode: restart
   trace:
@@ -65,11 +65,11 @@
       id: ha_startup
 
   condition:
-    # Window 07:00 -> 03:00 (cross-midnight)
+    # Window 07:00 -> 01:00 (cross-midnight)
     - condition: template
       value_template: >
         {% set t = now().strftime('%H:%M:%S') %}
-        {{ (t >= '07:00:00') or (t < '03:00:00') }}
+        {{ (t >= '07:00:00') or (t < '01:00:00') }}
 
     # Gate ONLY the early hour 07:00–08:00: require SoC >= 75
     # After 08:00 always allowed (regardless of SoC).
@@ -456,13 +456,13 @@
         value: 0
 
 # ----------------------------------------------------------------------------
-# HARD STOP at 03:00 (no matter what)
+# HARD STOP at 01:00 (no matter what)
 # ----------------------------------------------------------------------------
 - id: solarflow_grid_zero_hard_stop_0200
-  alias: "SolarFlow – Grid-Zero Hard Stop (03:00)"
+  alias: "SolarFlow – Grid-Zero Hard Stop (01:00)"
   trigger:
     - platform: time
-      at: "03:00:00"
+      at: "01:00:00"
   condition: []
   action:
     - service: select.select_option
