@@ -69,7 +69,7 @@
     - condition: template
       value_template: >
         {% set t = now().strftime('%H:%M:%S') %}
-        {{ (t >= '07:00:00') or (t < '01:00:00') }}
+        {{ (t >= '07:00:00') or (t < '00:59:30') }}
 
     # Gate ONLY the early hour 07:00–08:00: require SoC >= 75
     # After 08:00 always allowed (regardless of SoC).
@@ -103,12 +103,13 @@
         soc_charge_max: "{{ states('input_number.solarflow_soc_charge_max') | float(90) | int }}"
 
         # --- policy knobs ---
-        evening_soc_min: 50
+        evening_soc_min: "{{ states('input_number.solarflow_evening_soc_min') | float(45) | int }}"
 
         # After 22:00, if SoC is low, force idle (inclusive: <=)
         after_22_and_low_soc: >-
           {% set t = now().strftime('%H:%M:%S') %}
-          {{ (t >= '22:00:00') and (soc <= evening_soc_min) }}
+          {{ ( (t >= '22:00:00') or (t < '00:59:30') ) and (soc <= evening_soc_min) }}
+
 
         # --- tuning ---
         step_size: 50
@@ -259,7 +260,7 @@
 
     - choose:
         # ============================================================
-        # RULE: After 22:00 and SoC <= 50% => force idle (no control)
+        # RULE: After 22:00 and SoC <= 45% => force idle (no control)
         # ============================================================
         - conditions:
             - condition: template
@@ -462,7 +463,7 @@
   alias: "SolarFlow – Grid-Zero Hard Stop (01:00)"
   trigger:
     - platform: time
-      at: "01:00:00"
+      at: "00:59:30"
   condition: []
   action:
     - service: select.select_option

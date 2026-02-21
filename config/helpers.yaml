@@ -1,7 +1,7 @@
 solarflow_min_delta:
   name: SolarFlow min power delta
   min: 0
-  max: 100      # keep this, so you can try 60/80 later
+  max: 100 # keep this, so you can try 60/80 later
   step: 10
   unit_of_measurement: W
   mode: box
@@ -22,7 +22,7 @@ solarflow_discharge_last:
   # Used for delta comparison to avoid redundant commands.
 
 solarflow_charge_last:
-  name: SolarFlow last AC charge limit
+  name: ALL SolarFlow last AC charge limit
   min: 0
   max: 1000
   step: 10
@@ -36,18 +36,18 @@ solarflow_charge_last:
 solarflow_deadband:
   name: SolarFlow grid deadband
   min: 0
-  max: 200      # keep this, so you can raise deadband if needed
+  max: 200 # keep this, so you can raise deadband if needed
   step: 5
   unit_of_measurement: W
   mode: slider
-  initial: 50   # this is your “target ~50 W surplus”
+  initial: 50 # this is your “target ~50 W surplus”
   icon: mdi:sine-wave
   # Grid power hysteresis band (±W around 0).
   # Higher = less responsive, lower API calls.
   # Default: 50 W.
 
 solarflow_soc_discharge_min:
-  name: SolarFlow min SoC for discharge
+  name: "11 SolarFlow min SoC for discharge"
   min: 0
   max: 50
   step: 1
@@ -59,7 +59,7 @@ solarflow_soc_discharge_min:
   # Protects battery health. Default: 25 %.
 
 solarflow_soc_charge_max:
-  name: SolarFlow max SoC for charge
+  name: "11 SolarFlow max SoC for charge"
   min: 50
   max: 100
   step: 1
@@ -70,9 +70,8 @@ solarflow_soc_charge_max:
   # Do not charge above this SoC %.
   # Protects battery health. Default: 90 %.
 
-
 solarflow_emergency_soc:
-  name: "SolarFlow Emergency Start SoC"
+  name: "12 SolarFlow Emergency Start SoC"
   icon: mdi:battery-alert
   initial: 20
   min: 0
@@ -82,7 +81,7 @@ solarflow_emergency_soc:
   mode: slider
 
 solarflow_emergency_stop_soc:
-  name: "SolarFlow Emergency Stop SoC"
+  name: "12 SolarFlow Emergency Stop SoC"
   icon: mdi:battery-check
   initial: 45
   min: 0
@@ -91,9 +90,8 @@ solarflow_emergency_stop_soc:
   unit_of_measurement: "%"
   mode: slider
 
-
 solarflow_low_pv_soc_limit:
-  name: "SolarFlow Low-PV SoC Limit"
+  name: "12 SolarFlow Low-PV SoC Limit"
   min: 0
   initial: 40
   max: 100
@@ -102,9 +100,8 @@ solarflow_low_pv_soc_limit:
   mode: slider
   icon: mdi:battery-medium
 
-
 solarflow_pv_threshold_kwh:
-  name: "SolarFlow PV Threshold (kWh)"
+  name: "12 SolarFlow PV Threshold (kWh)"
   initial: 5
   min: 0
   max: 30
@@ -112,3 +109,13 @@ solarflow_pv_threshold_kwh:
   unit_of_measurement: "kWh"
   mode: slider
   icon: mdi:weather-sunny
+
+solarflow_evening_soc_min:
+  name: "11 SolarFlow evening SoC min"
+  icon: mdi:battery-lock
+  min: 0
+  max: 100
+  step: 1
+  unit_of_measurement: "%"
+  mode: slider
+  initial: 45
