@@ -1,5 +1,5 @@
 # ============================================================================
-# GRID-ZERO: Bidirectional 100W steps (07:00* - 01:00) with SoC lock after 22:00
+# GRID-ZERO: Bidirectional 100W steps (07:00* - 02:00) with SoC lock after 22:00
 # *Starts at 07:00 only if SoC >= 75%, otherwise starts at 08:00 as usual.
 # ============================================================================
 #
@@ -15,10 +15,10 @@
 # MAIN GRID-ZERO CONTROLLER
 # ----------------------------------------------------------------------------
 - id: solarflow_day_grid_zero_step_100w
-  alias: "SolarFlow – Grid-Zero 100W Steps (07:00–01:00; 07:00 requires SoC>=75)"
+  alias: "SolarFlow – Grid-Zero 100W Steps (07:00–02:00; 07:00 requires SoC>=75)"
   description: >
     Keep Shelly Phase A around 0W using step control.
-    Runs 07:00–01:00 (cross-midnight). Between 07:00–08:00 it runs only if SoC >= 75%.
+    Runs 07:00–02:00 (cross-midnight). Between 07:00–08:00 it runs only if SoC >= 75%.
     After 08:00 it runs regardless of SoC. After 22:00, forces IDLE if SoC is low.
   mode: restart
   trace:
@@ -65,19 +65,23 @@
       id: ha_startup
 
   condition:
-    # Window 07:00 -> 01:00 (cross-midnight)
+    # Window 07:00 -> stop (cross-midnight)
     - condition: template
       value_template: >
         {% set t = now().strftime('%H:%M:%S') %}
-        {{ (t >= '07:00:00') or (t < '00:59:30') }}
+        {% set planned = is_state('input_boolean.solarflow_night_charge_planned','on') %}
+        {% set stop = '01:59:30' if planned else '06:59:30' %}
+        {{ (t >= '07:00:00') or (t < stop) }}
+
 
     # Gate ONLY the early hour 07:00–08:00: require SoC >= 75
-    # After 08:00 always allowed (regardless of SoC).
+    # Gate ONLY the early hour 07:00–08:00:
+    # If night charge is planned -> wait until 08:00. Else -> allow 07:00 start.
     - condition: template
       value_template: >
         {% set t = now().strftime('%H:%M:%S') %}
-        {% set soc = states('sensor.solarflow_800_pro_electric_level') | float(0) %}
-        {{ (t >= '08:00:00') or (t < '07:00:00') or (soc >= 75) }}
+        {% set night_charge_planned = is_state('input_boolean.solarflow_night_charge_planned', 'on') %}
+        {{ (t >= '08:00:00') or (t < '07:00:00') or (not night_charge_planned) }}
 
     # Entities available
     - condition: template
@@ -108,7 +112,10 @@
         # After 22:00, if SoC is low, force idle (inclusive: <=)
         after_22_and_low_soc: >-
           {% set t = now().strftime('%H:%M:%S') %}
-          {{ ( (t >= '22:00:00') or (t < '00:59:30') ) and (soc <= evening_soc_min) }}
+          {% set planned = is_state('input_boolean.solarflow_night_charge_planned','on') %}
+          {% set stop = '01:59:30' if planned else '06:59:30' %}
+          {{ ( (t >= '22:00:00') or (t < stop) ) and (soc <= evening_soc_min) }}
+
 
 
         # --- tuning ---
@@ -426,45 +433,20 @@
               "STEP100 IDLE: grid={{ grid }}W, soc={{ soc }}%, trigger={{ trigger.id }}"
 
 # ----------------------------------------------------------------------------
-# OPTIONAL: Safety idle at 07:00 if SoC < 75 (keeps 07:00–08:00 clean/idle)
+# HARD STOP at 02:00:
+# - If night charge planned (helper ON) -> force IDLE at 01:59:30
+# - Else (helper OFF) -> do nothing (automation 11 may run until 06:59:30)
 # ----------------------------------------------------------------------------
-- id: solarflow_grid_zero_idle_if_low_soc_0700
-  alias: "SolarFlow – Idle at 07:00 if SoC < 75"
-  mode: single
-  trigger:
-    - platform: time
-      at: "07:00:05"
-  condition:
-    - condition: numeric_state
-      entity_id: sensor.solarflow_800_pro_electric_level
-      below: 75
-  action:
-    - service: number.set_value
-      target:
-        entity_id:
-          - number.solarflow_800_pro_output_limit
-          - number.solarflow_800_pro_input_limit
-      data:
-        value: 0
-      continue_on_error: false
 
-    - service: input_number.set_value
-      target:
-        entity_id:
-          - input_number.solarflow_discharge_last
-          - input_number.solarflow_charge_last
-      data:
-        value: 0
-
-# ----------------------------------------------------------------------------
-# HARD STOP at 01:00 (no matter what)
-# ----------------------------------------------------------------------------
 - id: solarflow_grid_zero_hard_stop_0200
-  alias: "SolarFlow – Grid-Zero Hard Stop (01:00)"
+  alias: "SolarFlow – Grid-Zero Hard Stop (02:00)"
   trigger:
     - platform: time
-      at: "00:59:30"
-  condition: []
+      at: "01:59:30"
+  condition:
+    - condition: state
+      entity_id: input_boolean.solarflow_night_charge_planned
+      state: "on"
   action:
     - service: select.select_option
       target:

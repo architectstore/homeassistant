@@ -23,10 +23,12 @@ mqtt:
       device_class: power
       state_class: measurement
 
-input_number: !include helpers.yaml
+input_number: !include helpers/input_number.yaml
+input_boolean: !include helpers/input_boolean.yaml
 
 http:
   use_x_forwarded_for: true
   trusted_proxies:
     - 192.168.50.210
+    - 192.168.50.136
     - 192.168.50.72
