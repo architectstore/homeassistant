@@ -1,0 +1,49 @@
+alias: EV charge on export / stop on import (Shelly negative=export)
+mode: restart
+
+trigger:
+  - id: start
+    platform: numeric_state
+    entity_id: sensor.shelly_phase_a_power_smoothed
+    below: -2500
+
+  - id: stop
+    platform: numeric_state
+    entity_id: sensor.shelly_phase_a_power_smoothed
+    above: 500
+    for: "00:00:05"
+
+condition:
+  - condition: state
+    entity_id: binary_sensor.ev_charger_connectivity
+    state: "on"
+
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: start
+          - condition: state
+            entity_id: switch.ev_charger
+            state: "off"
+        sequence:
+          - service: number.set_value
+            target:
+              entity_id: number.ev_charger_charging_current
+            data:
+              value: 10
+          - delay: "00:00:02"
+          - service: switch.turn_on
+            target:
+              entity_id: switch.ev_charger
+
+      - conditions:
+          - condition: trigger
+            id: stop
+          - condition: state
+            entity_id: switch.ev_charger
+            state: "on"
+        sequence:
+          - service: switch.turn_off
+            target:
+              entity_id: switch.ev_charger
