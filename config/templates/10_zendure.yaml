@@ -1,0 +1,111 @@
+- sensor:
+    - name: "Zendure Solar Input Power"
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      state: >
+        {{ state_attr('sensor.zendure_solarflow_raw', 'properties')['solarInputPower'] }}
+
+    - name: "Zendure Output Home Power"
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      state: >
+        {{ state_attr('sensor.zendure_solarflow_raw', 'properties')['outputHomePower'] }}
+
+    - name: "Zendure Battery Input Power"
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      state: >
+        {{ state_attr('sensor.zendure_solarflow_raw', 'properties')['packInputPower'] }}
+
+    - name: "Zendure Grid Input Power"
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      state: >
+        {{ state_attr('sensor.zendure_solarflow_raw', 'properties')['gridInputPower'] }}
+
+    - name: "Zendure Offgrid Output Power"
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      state: >
+        {{ state_attr('sensor.zendure_solarflow_raw', 'properties')['gridOffPower'] }}
+
+    - name: "Zendure Battery SoC"
+      unit_of_measurement: "%"
+      device_class: battery
+      state_class: measurement
+      state: >
+        {{ state_attr('sensor.zendure_solarflow_raw', 'properties')['electricLevel'] }}
+
+    - name: "Zendure Battery Voltage"
+      unit_of_measurement: "V"
+      device_class: voltage
+      state_class: measurement
+      state: >
+        {{ state_attr('sensor.zendure_solarflow_raw', 'properties')['BatVolt'] | float / 100 }}
+
+    - name: "Zendure RSSI"
+      unit_of_measurement: "dBm"
+      state_class: measurement
+      state: >
+        {{ state_attr('sensor.zendure_solarflow_raw', 'properties')['rssi'] }}
+
+    - name: "Zendure Remaining Time"
+      unit_of_measurement: "min"
+      state_class: measurement
+      state: >
+        {{ state_attr('sensor.zendure_solarflow_raw', 'properties')['remainOutTime'] }}
+  
+      - name: "Zendure Heat State"
+      state: >
+        {{ state_attr('sensor.zendure_solarflow_raw', 'properties')['heatState'] }}
+
+    - name: "Zendure AC Status"
+      state: >
+        {{ state_attr('sensor.zendure_solarflow_raw', 'properties')['acStatus'] }}
+
+    - name: "Zendure DC Status"
+      state: >
+        {{ state_attr('sensor.zendure_solarflow_raw', 'properties')['dcStatus'] }}
+
+    - name: "Zendure PV Status"
+      state: >
+        {{ state_attr('sensor.zendure_solarflow_raw', 'properties')['pvStatus'] }}
+
+    - name: "Zendure Pack Count"
+      unit_of_measurement: ""
+      state_class: measurement
+      state: >
+        {{ state_attr('sensor.zendure_solarflow_raw', 'properties')['packNum'] }}
+
+    - name: "Zendure Pack 1 SoC"
+      unit_of_measurement: "%"
+      device_class: battery
+      state_class: measurement
+      state: >
+        {{ state_attr('sensor.zendure_solarflow_raw', 'packData')[0]['socLevel'] }}
+
+    - name: "Zendure Pack 2 SoC"
+      unit_of_measurement: "%"
+      device_class: battery
+      state_class: measurement
+      state: >
+        {{ state_attr('sensor.zendure_solarflow_raw', 'packData')[1]['socLevel'] }}
+
+    - name: "Zendure Pack 3 SoC"
+      unit_of_measurement: "%"
+      device_class: battery
+      state_class: measurement
+      state: >
+        {{ state_attr('sensor.zendure_solarflow_raw', 'packData')[2]['socLevel'] }}
+
+    - name: "Zendure Output Pack Power"
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      state: >
+        {{ state_attr('sensor.zendure_solarflow_raw', 'properties')['outputPackPower'] }}

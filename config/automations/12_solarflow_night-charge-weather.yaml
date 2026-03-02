@@ -71,11 +71,11 @@
         low_pv_soc_limit: "{{ states('input_number.solarflow_low_pv_soc_limit') | float(45) }}"
 
         # Use today's forecast (because after midnight it's already 'today')
-        pv_today_kwh: "{{ states('sensor.energy_production_today') | float(0) }}"
+        pv_today_kwh: "{{ states('sensor.solar_production_estimate_today_total') | float(0) }}"
         pv_threshold_kwh: "{{ states('input_number.solarflow_pv_threshold_kwh') | float(5) }}"
 
         pv_forecast_available: >-
-          {{ states('sensor.energy_production_today')
+          {{ states('sensor.solar_production_estimate_today_total')
              not in ['unknown','unavailable','none',''] }}
 
         # Decision: should we charge tonight due to low PV forecast?

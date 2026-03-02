@@ -1,0 +1,18 @@
+- sensor:
+    - name: "Solar production estimate today (total)"
+      unique_id: solar_production_estimate_today_total
+      unit_of_measurement: "kWh"
+      device_class: energy
+      state_class: measurement
+      state: >-
+        {{
+          states('sensor.energy_production_today') | float(0) +
+          states('sensor.energy_production_today_2') | float(0) +
+          states('sensor.energy_production_today_3') | float(0)
+        }}
+      availability: >-
+        {{
+          states('sensor.energy_production_today') | is_number and
+          states('sensor.energy_production_today_2') | is_number and
+          states('sensor.energy_production_today_3') | is_number
+        }}
