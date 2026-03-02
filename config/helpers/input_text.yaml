@@ -1,0 +1,9 @@
+  zendure_last_full_date:
+    name: Zendure last full date
+    max: 20
+    icon: mdi:calendar
+
+  zendure_last_deep_discharge_date:
+    name: Zendure last deep discharge date
+    max: 20
+    icon: mdi:calendar-arrow-down

@@ -1,0 +1,132 @@
+- id: battery_health_management
+  alias: "Battery health management"
+  mode: single
+
+  variables:
+    # --- TUNABLE SETTINGS ---
+    SOC_SENSOR: sensor.zendure_battery_soc
+
+    # Charge-side helpers
+    LAST_FULL_DATE_HELPER: input_text.zendure_last_full_date
+    CHARGE_CAP_HELPER: input_number.solarflow_soc_charge_max
+
+    # Discharge-side helpers
+    LAST_DEEP_DISCHARGE_DATE_HELPER: input_text.zendure_last_deep_discharge_date
+    DISCHARGE_MIN_HELPER: input_number.solarflow_soc_discharge_min
+
+    # --- CHARGE “FULL” EXERCISE ---
+    FULL_SOC_PCT: 99
+    FULL_HOLD_TIME: "00:20:00"
+    FULL_INTERVAL_DAYS: 15
+    CAP_NORMAL: 90
+    CAP_FULL: 100
+
+    # numeric_state is strict "above"
+    FULL_SOC_EPS: 0.1
+    FULL_TRIGGER_ABOVE: "{{ (FULL_SOC_PCT | float) - (FULL_SOC_EPS | float) }}"
+
+    # --- DISCHARGE “DEEP” EXERCISE ---
+    DEEP_SOC_PCT: 5
+    DEEP_HOLD_TIME: "00:10:00"
+    DISCHARGE_INTERVAL_DAYS: 20   # (your requested variable name)
+    DISCHARGE_MIN_NORMAL: 20
+    DISCHARGE_MIN_DEEP: 5
+
+    # numeric_state is strict "below"
+    DEEP_SOC_EPS: 0.1
+    DEEP_TRIGGER_BELOW: "{{ (DEEP_SOC_PCT | float) + (DEEP_SOC_EPS | float) }}"
+
+    # Recalc schedule
+    DAILY_RECALC_AT: "00:05:00"
+
+  trigger:
+    # Record last "full" charge day
+    - platform: numeric_state
+      entity_id: sensor.zendure_battery_soc
+      above: "{{ FULL_TRIGGER_ABOVE }}"
+      for: "{{ FULL_HOLD_TIME }}"
+      id: reached_full
+
+    # Record last "deep" discharge day
+    - platform: numeric_state
+      entity_id: sensor.zendure_battery_soc
+      below: "{{ DEEP_TRIGGER_BELOW }}"
+      for: "{{ DEEP_HOLD_TIME }}"
+      id: reached_deep
+
+    # Periodic recompute
+    - platform: time
+      at: "{{ DAILY_RECALC_AT }}"
+      id: daily_recalc
+
+    - platform: homeassistant
+      event: start
+      id: ha_start
+
+  variables:
+    today_date: "{{ now().replace(hour=0, minute=0, second=0, microsecond=0) }}"
+
+    # ----- CHARGE side state -----
+    last_full_date_str: "{{ states(LAST_FULL_DATE_HELPER) }}"
+    last_full_date: >-
+      {% if last_full_date_str is match('^\\d{4}-\\d{2}-\\d{2}$') %}
+        {{ as_datetime(last_full_date_str ~ ' 00:00:00') }}
+      {% else %}
+        {{ none }}
+      {% endif %}
+    days_since_full: >-
+      {% if last_full_date is not none %}
+        {{ (today_date.date() - last_full_date.date()).days }}
+      {% else %}
+        9999
+      {% endif %}
+    allow_full: "{{ days_since_full >= (FULL_INTERVAL_DAYS | int) }}"
+    target_charge_cap: "{{ CAP_FULL if allow_full else CAP_NORMAL }}"
+
+    # ----- DISCHARGE side state -----
+    last_deep_date_str: "{{ states(LAST_DEEP_DISCHARGE_DATE_HELPER) }}"
+    last_deep_date: >-
+      {% if last_deep_date_str is match('^\\d{4}-\\d{2}-\\d{2}$') %}
+        {{ as_datetime(last_deep_date_str ~ ' 00:00:00') }}
+      {% else %}
+        {{ none }}
+      {% endif %}
+    days_since_deep: >-
+      {% if last_deep_date is not none %}
+        {{ (today_date.date() - last_deep_date.date()).days }}
+      {% else %}
+        9999
+      {% endif %}
+    allow_deep: "{{ days_since_deep >= (DISCHARGE_INTERVAL_DAYS | int) }}"
+    target_discharge_min: "{{ DISCHARGE_MIN_DEEP if allow_deep else DISCHARGE_MIN_NORMAL }}"
+
+  action:
+    - choose:
+        - conditions: "{{ trigger.id == 'reached_full' }}"
+          sequence:
+            - service: input_text.set_value
+              target:
+                entity_id: "{{ LAST_FULL_DATE_HELPER }}"
+              data:
+                value: "{{ now().strftime('%Y-%m-%d') }}"
+
+        - conditions: "{{ trigger.id == 'reached_deep' }}"
+          sequence:
+            - service: input_text.set_value
+              target:
+                entity_id: "{{ LAST_DEEP_DISCHARGE_DATE_HELPER }}"
+              data:
+                value: "{{ now().strftime('%Y-%m-%d') }}"
+
+    # Apply caps/floors (every run)
+    - service: input_number.set_value
+      target:
+        entity_id: "{{ CHARGE_CAP_HELPER }}"
+      data:
+        value: "{{ target_charge_cap }}"
+
+    - service: input_number.set_value
+      target:
+        entity_id: "{{ DISCHARGE_MIN_HELPER }}"
+      data:
+        value: "{{ target_discharge_min }}"
