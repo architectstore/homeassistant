@@ -1,3 +1,17 @@
+# =============================================================================
+# Battery health management (tunable)
+#
+# - Upper SoC exercise:
+#   Normally cap charge at CAP_NORMAL, but allow CAP_FULL once every
+#   FULL_INTERVAL_DAYS calendar days when SoC reaches "full" (>= FULL_SOC_PCT).
+#
+# - Lower SoC exercise:
+#   Normally keep discharge floor at DISCHARGE_MIN_NORMAL, but allow deeper
+#   discharge down to DISCHARGE_MIN_DEEP if that low SoC hasn't been reached for
+#   DISCHARGE_INTERVAL_DAYS calendar days.
+#
+# =====================================================================
+
 - id: battery_health_management
   alias: "Battery health management"
   mode: single
@@ -6,12 +20,11 @@
     # --- TUNABLE SETTINGS ---
     SOC_SENSOR: sensor.zendure_battery_soc
 
-    # Charge-side helpers
+    # Helpers
     LAST_FULL_DATE_HELPER: input_text.zendure_last_full_date
-    CHARGE_CAP_HELPER: input_number.solarflow_soc_charge_max
-
-    # Discharge-side helpers
     LAST_DEEP_DISCHARGE_DATE_HELPER: input_text.zendure_last_deep_discharge_date
+
+    CHARGE_CAP_HELPER: input_number.solarflow_soc_charge_max
     DISCHARGE_MIN_HELPER: input_number.solarflow_soc_discharge_min
 
     # --- CHARGE “FULL” EXERCISE ---
@@ -21,42 +34,37 @@
     CAP_NORMAL: 90
     CAP_FULL: 100
 
-    # numeric_state is strict "above"
-    FULL_SOC_EPS: 0.1
-    FULL_TRIGGER_ABOVE: "{{ (FULL_SOC_PCT | float) - (FULL_SOC_EPS | float) }}"
-
     # --- DISCHARGE “DEEP” EXERCISE ---
     DEEP_SOC_PCT: 5
     DEEP_HOLD_TIME: "00:10:00"
-    DISCHARGE_INTERVAL_DAYS: 20   # (your requested variable name)
+    DISCHARGE_INTERVAL_DAYS: 20
     DISCHARGE_MIN_NORMAL: 20
     DISCHARGE_MIN_DEEP: 5
-
-    # numeric_state is strict "below"
-    DEEP_SOC_EPS: 0.1
-    DEEP_TRIGGER_BELOW: "{{ (DEEP_SOC_PCT | float) + (DEEP_SOC_EPS | float) }}"
 
     # Recalc schedule
     DAILY_RECALC_AT: "00:05:00"
 
+    # --- TRIGGER THRESHOLDS (must be static numbers for reliability) ---
+    # Emulate ">= 99" with strict "above"
+    FULL_TRIGGER_ABOVE_STATIC: 98.9
+    # Emulate "<= 5" with strict "below"
+    DEEP_TRIGGER_BELOW_STATIC: 5.1
+
   trigger:
-    # Record last "full" charge day
     - platform: numeric_state
       entity_id: sensor.zendure_battery_soc
-      above: "{{ FULL_TRIGGER_ABOVE }}"
-      for: "{{ FULL_HOLD_TIME }}"
+      above: 98.9
+      for: "00:20:00"
       id: reached_full
 
-    # Record last "deep" discharge day
     - platform: numeric_state
       entity_id: sensor.zendure_battery_soc
-      below: "{{ DEEP_TRIGGER_BELOW }}"
-      for: "{{ DEEP_HOLD_TIME }}"
+      below: 5.1
+      for: "00:10:00"
       id: reached_deep
 
-    # Periodic recompute
     - platform: time
-      at: "{{ DAILY_RECALC_AT }}"
+      at: "00:05:00"
       id: daily_recalc
 
     - platform: homeassistant
@@ -118,7 +126,6 @@
               data:
                 value: "{{ now().strftime('%Y-%m-%d') }}"
 
-    # Apply caps/floors (every run)
     - service: input_number.set_value
       target:
         entity_id: "{{ CHARGE_CAP_HELPER }}"
