@@ -1,67 +1,28 @@
-# =============================================================================
-# Battery health management (tunable)
-#
-# - Upper SoC exercise:
-#   Normally cap charge at CAP_NORMAL, but allow CAP_FULL once every
-#   FULL_INTERVAL_DAYS calendar days when SoC reaches "full" (>= FULL_SOC_PCT).
-#
-# - Lower SoC exercise:
-#   Normally keep discharge floor at DISCHARGE_MIN_NORMAL, but allow deeper
-#   discharge down to DISCHARGE_MIN_DEEP if that low SoC hasn't been reached for
-#   DISCHARGE_INTERVAL_DAYS calendar days.
-#
-# =====================================================================
-
 - id: battery_health_management
   alias: "Battery health management"
   mode: single
-
-  variables:
-    # --- TUNABLE SETTINGS ---
-    SOC_SENSOR: sensor.zendure_battery_soc
-
-    # Helpers
-    LAST_FULL_DATE_HELPER: input_text.zendure_last_full_date
-    LAST_DEEP_DISCHARGE_DATE_HELPER: input_text.zendure_last_deep_discharge_date
-
-    CHARGE_CAP_HELPER: input_number.solarflow_soc_charge_max
-    DISCHARGE_MIN_HELPER: input_number.solarflow_soc_discharge_min
-
-    # --- CHARGE “FULL” EXERCISE ---
-    FULL_SOC_PCT: 99
-    FULL_HOLD_TIME: "00:20:00"
-    FULL_INTERVAL_DAYS: 15
-    CAP_NORMAL: 90
-    CAP_FULL: 100
-
-    # --- DISCHARGE “DEEP” EXERCISE ---
-    DEEP_SOC_PCT: 5
-    DEEP_HOLD_TIME: "00:10:00"
-    DISCHARGE_INTERVAL_DAYS: 20
-    DISCHARGE_MIN_NORMAL: 20
-    DISCHARGE_MIN_DEEP: 5
-
-    # Recalc schedule
-    DAILY_RECALC_AT: "00:05:00"
-
-    # --- TRIGGER THRESHOLDS (must be static numbers for reliability) ---
-    # Emulate ">= 99" with strict "above"
-    FULL_TRIGGER_ABOVE_STATIC: 98.9
-    # Emulate "<= 5" with strict "below"
-    DEEP_TRIGGER_BELOW_STATIC: 5.1
+  trace:
+    stored_traces: 20
 
   trigger:
+    # Full event (>= ~99 for 20 min)
     - platform: numeric_state
       entity_id: sensor.zendure_battery_soc
       above: 98.9
       for: "00:20:00"
       id: reached_full
 
+    # Deep event (<= ~5 for 10 min)
     - platform: numeric_state
       entity_id: sensor.zendure_battery_soc
       below: 5.1
       for: "00:10:00"
       id: reached_deep
+
+    # Recompute regularly so it applies even without crossings
+    - platform: time_pattern
+      hours: "/1"
+      id: hourly_recalc
 
     - platform: time
       at: "00:05:00"
@@ -72,41 +33,49 @@
       id: ha_start
 
   variables:
-    today_date: "{{ now().replace(hour=0, minute=0, second=0, microsecond=0) }}"
+    # --- TUNABLES ---
+    full_interval_days: 15
+    cap_normal: 90
+    cap_full: 100
 
-    # ----- CHARGE side state -----
-    last_full_date_str: "{{ states(LAST_FULL_DATE_HELPER) }}"
-    last_full_date: >-
-      {% if last_full_date_str is match('^\\d{4}-\\d{2}-\\d{2}$') %}
-        {{ as_datetime(last_full_date_str ~ ' 00:00:00') }}
+    discharge_interval_days: 20
+    discharge_min_normal: 20
+    discharge_min_deep: 5
+
+    # --- DATE PARSING ---
+    today0: "{{ now().replace(hour=0, minute=0, second=0, microsecond=0) }}"
+
+    last_full_str: "{{ states('input_text.zendure_last_full_date') }}"
+    last_full_dt: >-
+      {% if last_full_str is match('^\\d{4}-\\d{2}-\\d{2}$') %}
+        {{ as_datetime(last_full_str ~ ' 00:00:00') }}
       {% else %}
         {{ none }}
       {% endif %}
     days_since_full: >-
-      {% if last_full_date is not none %}
-        {{ (today_date.date() - last_full_date.date()).days }}
+      {% if last_full_dt is not none %}
+        {{ (today0.date() - last_full_dt.date()).days }}
       {% else %}
         9999
       {% endif %}
-    allow_full: "{{ days_since_full >= (FULL_INTERVAL_DAYS | int) }}"
-    target_charge_cap: "{{ CAP_FULL if allow_full else CAP_NORMAL }}"
+    allow_full: "{{ days_since_full >= (full_interval_days | int) }}"
+    target_charge_cap: "{{ cap_full if allow_full else cap_normal }}"
 
-    # ----- DISCHARGE side state -----
-    last_deep_date_str: "{{ states(LAST_DEEP_DISCHARGE_DATE_HELPER) }}"
-    last_deep_date: >-
-      {% if last_deep_date_str is match('^\\d{4}-\\d{2}-\\d{2}$') %}
-        {{ as_datetime(last_deep_date_str ~ ' 00:00:00') }}
+    last_deep_str: "{{ states('input_text.zendure_last_deep_discharge_date') }}"
+    last_deep_dt: >-
+      {% if last_deep_str is match('^\\d{4}-\\d{2}-\\d{2}$') %}
+        {{ as_datetime(last_deep_str ~ ' 00:00:00') }}
       {% else %}
         {{ none }}
       {% endif %}
     days_since_deep: >-
-      {% if last_deep_date is not none %}
-        {{ (today_date.date() - last_deep_date.date()).days }}
+      {% if last_deep_dt is not none %}
+        {{ (today0.date() - last_deep_dt.date()).days }}
       {% else %}
         9999
       {% endif %}
-    allow_deep: "{{ days_since_deep >= (DISCHARGE_INTERVAL_DAYS | int) }}"
-    target_discharge_min: "{{ DISCHARGE_MIN_DEEP if allow_deep else DISCHARGE_MIN_NORMAL }}"
+    allow_deep: "{{ days_since_deep >= (discharge_interval_days | int) }}"
+    target_discharge_min: "{{ discharge_min_deep if allow_deep else discharge_min_normal }}"
 
   action:
     - choose:
@@ -114,7 +83,7 @@
           sequence:
             - service: input_text.set_value
               target:
-                entity_id: "{{ LAST_FULL_DATE_HELPER }}"
+                entity_id: input_text.zendure_last_full_date
               data:
                 value: "{{ now().strftime('%Y-%m-%d') }}"
 
@@ -122,18 +91,18 @@
           sequence:
             - service: input_text.set_value
               target:
-                entity_id: "{{ LAST_DEEP_DISCHARGE_DATE_HELPER }}"
+                entity_id: input_text.zendure_last_deep_discharge_date
               data:
                 value: "{{ now().strftime('%Y-%m-%d') }}"
 
     - service: input_number.set_value
       target:
-        entity_id: "{{ CHARGE_CAP_HELPER }}"
+        entity_id: input_number.solarflow_soc_charge_max
       data:
         value: "{{ target_charge_cap }}"
 
     - service: input_number.set_value
       target:
-        entity_id: "{{ DISCHARGE_MIN_HELPER }}"
+        entity_id: input_number.solarflow_soc_discharge_min
       data:
         value: "{{ target_discharge_min }}"
