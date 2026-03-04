@@ -35,8 +35,8 @@
     # Export side (want charge)
     - platform: numeric_state
       entity_id: sensor.shelly_phase_a_power_smoothed
-      below: -75
-      for: "00:00:05"
+      below: -100
+      for: "00:00:10"
       id: export_high
 
     # Periodic reevaluation
@@ -224,7 +224,7 @@
           {% set ld = last_discharge | int %}
           {% if g > 120 %}
             {{ td }}
-          {% elif g < -50 %}
+          {% elif g < -100 %}
             0
           {% else %}
             {{ ld }}
