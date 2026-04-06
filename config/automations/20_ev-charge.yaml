@@ -1,37 +1,88 @@
 - id: 'ev_charger_night_schedule'
-  alias: "EV Charger - Night Schedule"
+  alias: "EV Charger - Night Schedule (Safe Grid)"
+  description: "Liga 22h-8h só se rede <1000W, para >4900W ou horário"
+  mode: restart
+
   trigger:
-    - platform: time
-      at: "22:00:00"
-      id: 'night_on'
+    # Retry automático em mudanças relevantes
+    - platform: state
+      entity_id:
+        - binary_sensor.grid_low_safe_for_ev
+        - binary_sensor.grid_high_alert_ev
+        - binary_sensor.ev_charger_connectivity
+        - binary_sensor.ev_charger_problem
+    # Parada horário
     - platform: time
       at: "08:00:00"
       id: 'morning_off'
+
   action:
-    - variables:
-        charger_switch: switch.ev_charger
-        desired_state: >-
-          {% if trigger.id == 'night_on' %}
-            on
-          {% elif trigger.id == 'morning_off' %}
-            off
-          {% else %}
-            on
-          {% endif %}
-        current_status: "{{ states('sensor.ev_charger_status') }}"
-        current_power: "{{ states('sensor.ev_charger_power') | float(0) }}"
-    - condition: template
-      value_template: >-
-        {{ is_state(charger_switch, 'off' if desired_state == 'on' else 'on') and 
-           states('binary_sensor.ev_charger_connectivity') == 'on' and
-           states('binary_sensor.ev_charger_problem') == 'off' }}
-    - service: "{{ 'switch.turn_on' if desired_state == 'on' else 'switch.turn_off' }}"
-      target:
-        entity_id: "{{ charger_switch }}"
-    - service: persistent_notification.create
-      data:
-        title: "EV Charger {{ desired_state | upper }}"
-        message: >-
-          Status: {{ current_status }} | Power: {{ current_power }}kW | 
-          Connectivity: {{ states('binary_sensor.ev_charger_connectivity') }}
-  mode: single
+    - choose:
+        # 1. LIGA: horário noite + rede baixa + charger pronto
+        - conditions:
+            - condition: time
+              after: "22:00:00"
+              before: "08:00:00"
+            - condition: state
+              entity_id: binary_sensor.grid_low_safe_for_ev
+              state: "on"
+              for:
+                seconds: 5
+            - condition: state
+              entity_id: switch.ev_charger
+              state: "off"
+            - condition: state
+              entity_id: binary_sensor.ev_charger_connectivity
+              state: "on"
+            - condition: state
+              entity_id: binary_sensor.ev_charger_problem
+              state: "off"
+          sequence:
+            - service: switch.turn_on
+              target:
+                entity_id: switch.ev_charger
+            - service: notify.mobile_app_fcp_n49
+              data:
+                title: "EV: Carregamento INICIADO (Seguro)"
+                message: >-
+                  Fase A: {{ states('sensor.shelly_phase_a_power_smoothed') }} W (<1000W) |
+                  Hora: {{ now().strftime('%H:%M') }}
+
+        # 2. STOP EMERGÊNCIA: sobrecarga rede
+        - conditions:
+            - condition: state
+              entity_id: binary_sensor.grid_high_alert_ev
+              state: "on"
+              for:
+                seconds: 120
+            - condition: state
+              entity_id: switch.ev_charger
+              state: "on"
+          sequence:
+            - service: switch.turn_off
+              target:
+                entity_id: switch.ev_charger
+            - service: notify.mobile_app_fcp_n49
+              data:
+                title: "🚨 EV: PARADO SOBRECONSUMO!"
+                message: >-
+                  Fase A: {{ states('sensor.shelly_phase_a_power_smoothed') }} W (>4900W) |
+                  Hora: {{ now().strftime('%H:%M') }}
+
+        # 3. STOP HORÁRIO 08:00
+        - conditions:
+            - condition: trigger
+              id: 'morning_off'
+            - condition: state
+              entity_id: switch.ev_charger
+              state: "on"
+          sequence:
+            - service: switch.turn_off
+              target:
+                entity_id: switch.ev_charger
+            - service: notify.mobile_app_fcp_n49
+              data:
+                title: "EV: PARADO Horário"
+                message: "Fim carregamento noturno 08:00"
+
+  max_exceeded: silent

@@ -1,0 +1,75 @@
+- id: sonoff_zbminir2_sun_schedule
+  alias: Sonoff ZBMINIR2 Sun Schedule
+  description: Turn on 30 minutes after sunset, turn off 1 hour before sunrise, and resync on HA startup
+  triggers:
+    - trigger: sun
+      event: sunset
+      offset: "00:30:00"
+      id: turn_on
+
+    - trigger: sun
+      event: sunrise
+      offset: "-01:00:00"
+      id: turn_off
+
+    - trigger: homeassistant
+      event: start
+      id: sync
+
+  conditions: []
+
+  actions:
+    - if:
+        - condition: trigger
+          id: sync
+      then:
+        - delay: "00:00:30"
+
+    - choose:
+        - conditions:
+            - condition: or
+              conditions:
+                - condition: trigger
+                  id: turn_on
+                - condition: and
+                  conditions:
+                    - condition: trigger
+                      id: sync
+                    - condition: or
+                      conditions:
+                        - condition: sun
+                          after: sunset
+                          after_offset: "00:30:00"
+                        - condition: sun
+                          before: sunrise
+                          before_offset: "-01:00:00"
+          sequence:
+            - action: switch.turn_on
+              target:
+                entity_id: switch.sonoff_zbminir2
+
+        - conditions:
+            - condition: or
+              conditions:
+                - condition: trigger
+                  id: turn_off
+                - condition: and
+                  conditions:
+                    - condition: trigger
+                      id: sync
+                    - condition: not
+                      conditions:
+                        - condition: or
+                          conditions:
+                            - condition: sun
+                              after: sunset
+                              after_offset: "00:30:00"
+                            - condition: sun
+                              before: sunrise
+                              before_offset: "-01:00:00"
+          sequence:
+            - action: switch.turn_off
+              target:
+                entity_id: switch.sonoff_zbminir2
+
+  mode: single

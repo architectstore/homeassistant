@@ -1,0 +1,82 @@
+- id: notify_zigbee_sensor_offline
+  alias: Notify - Zigbee sensor offline
+  description: Notify phone when a ZHA Zigbee sensor goes unavailable
+  mode: parallel
+
+  trigger:
+    - platform: state
+      entity_id:
+        - binary_sensor.gate_sensor_garage
+        - binary_sensor.gate_sensor_garage_tamper
+        - binary_sensor.motion_entrance_occupancy
+        - binary_sensor.motion_entrance
+        - binary_sensor.water_leak_sensor_garage
+        - binary_sensor.smoke_detector_kitchen
+        - binary_sensor.motion_garage_occupancy
+        - binary_sensor.motion_garage
+        - binary_sensor.sonoff_zbminir2_opening
+        - sensor.temp_hum_attic_temperature
+        - sensor.temp_hum_sala_temperature
+        - sensor.temp_hum_cozinha_temperature
+        - sensor.temp_hum_sarah_temperature
+        - sensor.temp_hum_suite_temperature
+        - sensor.tem_hum_garage_temperature
+        - sensor.tem_hum_garden_temperature
+      to: "unavailable"
+      for:
+        minutes: 5
+
+  condition: []
+
+  action:
+    - service: notify.mobile_app_fcp_n49
+      data:
+        title: "Zigbee device offline"
+        message: >-
+          {{ trigger.to_state.name if trigger.to_state and trigger.to_state.name else trigger.entity_id }}
+          is unavailable.
+        data:
+          tag: zigbee_offline
+          ttl: 0
+          priority: high
+
+
+- id: notify_zigbee_sensor_online
+  alias: Notify - Zigbee sensor back online
+  description: Notify phone when a ZHA Zigbee sensor becomes available again
+  mode: parallel
+
+  trigger:
+    - platform: state
+      entity_id:
+        - binary_sensor.gate_sensor_garage
+        - binary_sensor.gate_sensor_garage_tamper
+        - binary_sensor.motion_entrance_occupancy
+        - binary_sensor.motion_entrance
+        - binary_sensor.water_leak_sensor_garage
+        - binary_sensor.smoke_detector_kitchen
+        - binary_sensor.motion_garage_occupancy
+        - binary_sensor.motion_garage
+        - binary_sensor.sonoff_zbminir2_opening
+        - sensor.temp_hum_attic_temperature
+        - sensor.temp_hum_sala_temperature
+        - sensor.temp_hum_cozinha_temperature
+        - sensor.temp_hum_sarah_temperature
+        - sensor.temp_hum_suite_temperature
+        - sensor.tem_hum_garage_temperature
+        - sensor.tem_hum_garden_temperature
+      from: "unavailable"
+      for:
+        minutes: 1
+
+  condition: []
+
+  action:
+    - service: notify.mobile_app_fcp_n49
+      data:
+        title: "Zigbee device back online"
+        message: >-
+          {{ trigger.to_state.name if trigger.to_state and trigger.to_state.name else trigger.entity_id }}
+          is available again.
+        data:
+          tag: zigbee_offline

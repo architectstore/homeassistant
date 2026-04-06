@@ -3,3 +3,7 @@ solarflow_night_charge_planned:
   icon: mdi:calendar-night
   initial: false
 
+gate_sentinel:
+  name: "Gate Sentinel"
+  icon: mdi:shield-home
+  initial: false

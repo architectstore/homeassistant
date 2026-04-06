@@ -1,0 +1,44 @@
+- id: sentinel_alert_gate_or
+  alias: Sentinel - Alert on gate or occupancy
+  description: Notify phone when sentinel is on and gate opens or occupancy is detected
+  mode: single
+
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.gate_sensor_garage
+      to: "on"
+      id: gate
+
+    - platform: state
+      entity_id: binary_sensor.motion_entrance
+      to: "on"
+      id: entrance
+
+    - platform: state
+      entity_id: binary_sensor.motion_garage
+      to: "on"
+      id: garage
+
+  condition:
+    - condition: state
+      entity_id: input_boolean.gate_sentinel
+      state: "on"
+
+  action:
+    - service: notify.mobile_app_fcp_n49
+      data:
+        title: "Sentinel alert"
+        message: >-
+          {% if trigger.id == 'gate' %}
+            Garage gate opened.
+          {% elif trigger.id == 'entrance' %}
+            Occupancy detected at entrance.
+          {% elif trigger.id == 'garage' %}
+            Occupancy detected in garage.
+          {% else %}
+            Triggered by {{ trigger.to_state.name if trigger.to_state else trigger.entity_id }}.
+          {% endif %}
+        data:
+          tag: sentinel_alert
+          ttl: 0
+          priority: high

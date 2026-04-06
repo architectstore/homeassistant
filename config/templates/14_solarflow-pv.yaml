@@ -1,0 +1,20 @@
+- sensor:
+    - name: "Solarflow PV Power Total"
+      unique_id: solarflow_pv_power_total
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      state: >
+        {{
+          states('sensor.solarflow_800_pro_solar_power1') | float(0) +
+          states('sensor.solarflow_800_pro_solar_power2') | float(0) +
+          states('sensor.solarflow_800_pro_solar_power3') | float(0) +
+          states('sensor.solarflow_800_pro_solar_power4') | float(0)
+        }}
+      availability: >
+        {{
+          states('sensor.solarflow_800_pro_solar_power1') not in ['unknown', 'unavailable', 'none'] and
+          states('sensor.solarflow_800_pro_solar_power2') not in ['unknown', 'unavailable', 'none'] and
+          states('sensor.solarflow_800_pro_solar_power3') not in ['unknown', 'unavailable', 'none'] and
+          states('sensor.solarflow_800_pro_solar_power4') not in ['unknown', 'unavailable', 'none']
+        }}
