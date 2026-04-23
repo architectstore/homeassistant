@@ -7,3 +7,7 @@ gate_sentinel:
   name: "Gate Sentinel"
   icon: mdi:shield-home
   initial: false
+
+ev_charge_enable:
+  name: EV Charge Enable
+  icon: mdi:car-electric
