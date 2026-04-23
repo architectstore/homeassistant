@@ -1,3 +1,29 @@
+- id: ev_charge_stop_on_enable_off
+  alias: "EV charge stop when enable off"
+  description: "Stops EV charging immediately when master EV charge enable is turned off"
+  mode: single
+
+  trigger:
+    - platform: state
+      entity_id: input_boolean.ev_charge_enable
+      to: "off"
+
+  condition:
+    - condition: state
+      entity_id: switch.ev_charger
+      state: "on"
+
+  action:
+    - service: switch.turn_off
+      target:
+        entity_id: switch.ev_charger
+
+    - service: notify.mobile_app_fcp_n49
+      data:
+        title: "EV: Carregamento PARADO manualmente"
+        message: >-
+          EV Charge Enable desligado às {{ now().strftime('%H:%M') }}
+
 - id: 'ev_charger_night_schedule'
   alias: "EV Charger - Night Schedule (Safe Grid)"
   description: "Liga 22h-8h só se rede <1000W, para >4900W ou horário"
@@ -11,6 +37,7 @@
         - binary_sensor.grid_high_alert_ev
         - binary_sensor.ev_charger_connectivity
         - binary_sensor.ev_charger_problem
+
     # Parada horário
     - platform: time
       at: "08:00:00"
@@ -18,11 +45,14 @@
 
   action:
     - choose:
-        # 1. LIGA: horário noite + rede baixa + charger pronto
+        # 1. LIGA: horário noite + rede baixa + charger pronto + enable on
         - conditions:
             - condition: time
               after: "22:00:00"
               before: "08:00:00"
+            - condition: state
+              entity_id: input_boolean.ev_charge_enable
+              state: "on"
             - condition: state
               entity_id: binary_sensor.grid_low_safe_for_ev
               state: "on"
@@ -41,6 +71,7 @@
             - service: switch.turn_on
               target:
                 entity_id: switch.ev_charger
+
             - service: notify.mobile_app_fcp_n49
               data:
                 title: "EV: Carregamento INICIADO (Seguro)"
@@ -62,6 +93,7 @@
             - service: switch.turn_off
               target:
                 entity_id: switch.ev_charger
+
             - service: notify.mobile_app_fcp_n49
               data:
                 title: "🚨 EV: PARADO SOBRECONSUMO!"
@@ -80,6 +112,7 @@
             - service: switch.turn_off
               target:
                 entity_id: switch.ev_charger
+
             - service: notify.mobile_app_fcp_n49
               data:
                 title: "EV: PARADO Horário"
