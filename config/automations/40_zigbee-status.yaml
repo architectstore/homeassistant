@@ -10,7 +10,7 @@
         - binary_sensor.gate_sensor_garage_tamper
         - binary_sensor.motion_entrance_occupancy
         - binary_sensor.motion_entrance
-        - binary_sensor.water_leak_sensor_garage
+        - binary_sensor.zbeacon_ts0207
         - binary_sensor.smoke_detector_kitchen
         - binary_sensor.motion_garage_occupancy
         - binary_sensor.motion_garage
@@ -36,12 +36,11 @@
           {{ trigger.to_state.name if trigger.to_state and trigger.to_state.name else trigger.entity_id }}
           is unavailable.
         data:
-          tag: zigbee_offline
+          tag: "zigbee_offline_{{ trigger.entity_id | replace('.', '_') }}"
           ttl: 0
           priority: high
 
-
-- id: notify_zigbee_sensor_online
+- id: notify_zigbee_sensor_back_online
   alias: Notify - Zigbee sensor back online
   description: Notify phone when a ZHA Zigbee sensor becomes available again
   mode: parallel
@@ -53,7 +52,7 @@
         - binary_sensor.gate_sensor_garage_tamper
         - binary_sensor.motion_entrance_occupancy
         - binary_sensor.motion_entrance
-        - binary_sensor.water_leak_sensor_garage
+        - binary_sensor.zbeacon_ts0207
         - binary_sensor.smoke_detector_kitchen
         - binary_sensor.motion_garage_occupancy
         - binary_sensor.motion_garage
@@ -79,4 +78,92 @@
           {{ trigger.to_state.name if trigger.to_state and trigger.to_state.name else trigger.entity_id }}
           is available again.
         data:
-          tag: zigbee_offline
+          tag: "zigbee_offline_{{ trigger.entity_id | replace('.', '_') }}"
+          ttl: 0
+          priority: high
+
+- id: notify_zigbee_sensor_offline_daily
+  alias: Notify - Zigbee sensor offline daily reminder
+  description: Send a daily reminder for Zigbee sensors still unavailable
+  mode: single
+
+  trigger:
+    - platform: time
+      at: "09:00:00"
+
+  condition: []
+
+  action:
+    - repeat:
+        for_each:
+          - binary_sensor.gate_sensor_garage
+          - binary_sensor.gate_sensor_garage_tamper
+          - binary_sensor.motion_entrance_occupancy
+          - binary_sensor.motion_entrance
+          - binary_sensor.zbeacon_ts0207
+          - binary_sensor.smoke_detector_kitchen
+          - binary_sensor.motion_garage_occupancy
+          - binary_sensor.motion_garage
+          - binary_sensor.sonoff_zbminir2_opening
+          - sensor.temp_hum_attic_temperature
+          - sensor.temp_hum_sala_temperature
+          - sensor.temp_hum_cozinha_temperature
+          - sensor.temp_hum_sarah_temperature
+          - sensor.temp_hum_suite_temperature
+          - sensor.tem_hum_garage_temperature
+          - sensor.tem_hum_garden_temperature
+        sequence:
+          - condition: template
+            value_template: "{{ states(repeat.item) == 'unavailable' }}"
+          - service: notify.mobile_app_fcp_n49
+            data:
+              title: "Zigbee device still offline"
+              message: >-
+                {{ state_attr(repeat.item, 'friendly_name') or repeat.item }}
+                is still unavailable.
+              data:
+                tag: "zigbee_offline_daily_{{ repeat.item | replace('.', '_') }}"
+                ttl: 0
+                priority: high
+
+- id: notify_zigbee_battery_low
+  alias: Notify - Zigbee battery low
+  description: Notify when selected Zigbee device batteries drop below 20%
+  mode: parallel
+
+  trigger:
+    - platform: numeric_state
+      entity_id:
+        - sensor.temp_hum_sala_battery
+        - sensor.motion_garage_battery
+        - sensor.temp_hum_suite_battery
+        - sensor.motion_entrance_battery
+        - sensor.temp_hum_cozinha_battery
+        - sensor.smoke_detector_kitchen_battery
+        - sensor.water_leak_sensor_garage_battery
+        - sensor.temp_hum_attic_battery
+        - sensor.temp_hum_sarah_battery
+        - sensor.tem_hum_garage_battery
+        - sensor.gate_sensor_garage_battery
+        - sensor.tem_hum_garden_battery
+      below: 20
+      for:
+        minutes: 10
+
+  condition:
+    - condition: template
+      value_template: >
+        {{ trigger.to_state is not none and
+           trigger.to_state.state not in ['unknown', 'unavailable', 'none', ''] }}
+
+  action:
+    - service: notify.mobile_app_fcp_n49
+      data:
+        title: "Zigbee battery low"
+        message: >-
+          {{ trigger.to_state.name if trigger.to_state and trigger.to_state.name else trigger.entity_id }}
+          is at {{ trigger.to_state.state }}% battery.
+        data:
+          tag: "zigbee_battery_low_{{ trigger.entity_id | replace('.', '_') }}"
+          ttl: 0
+          priority: high

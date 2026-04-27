@@ -66,13 +66,16 @@
                   Corrente: 10 A |
                   Hora: {{ now().strftime('%H:%M') }}
 
-        # STOP
+        # STOP only in high tariff period
         - conditions:
             - condition: trigger
               id: stop
             - condition: state
               entity_id: switch.ev_charger
               state: "on"
+            - condition: time
+              after: "08:00:00"
+              before: "22:00:00"
           sequence:
             - service: switch.turn_off
               target:
