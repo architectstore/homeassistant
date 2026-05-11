@@ -60,7 +60,7 @@
       state: >
         {{ state_attr('sensor.zendure_solarflow_raw', 'properties')['remainOutTime'] }}
   
-      - name: "Zendure Heat State"
+    - name: "Zendure Heat State"
       state: >
         {{ state_attr('sensor.zendure_solarflow_raw', 'properties')['heatState'] }}
 
@@ -109,3 +109,25 @@
       state_class: measurement
       state: >
         {{ state_attr('sensor.zendure_solarflow_raw', 'properties')['outputPackPower'] }}
+
+    - name: "SolarFlow Total Output Home Power"
+      unique_id: solarflow_total_output_home_power
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      state: >
+        {{
+          states('sensor.solarflow_800_pro_output_home_power') | float(0) +
+          states('sensor.solarflow_800_pro_2_output_home_power') | float(0)
+        }}
+
+    - name: "SolarFlow Total Output Pack Power"
+      unique_id: solarflow_total_output_pack_power
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      state: >
+        {{
+          states('sensor.solarflow_800_pro_output_pack_power') | float(0) +
+          states('sensor.solarflow_800_pro_2_output_pack_power') | float(0)
+        }}

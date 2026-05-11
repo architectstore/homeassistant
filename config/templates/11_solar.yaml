@@ -16,3 +16,22 @@
           states('sensor.energy_production_today_2') | is_number and
           states('sensor.energy_production_today_3') | is_number
         }}
+
+- sensor:
+    - name: "PV Power Total Aggregated"
+      unique_id: pv_power_total_aggregated
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      state: >
+        {{
+          states('sensor.solax_srgsgesgnc_ac_output_power') | float(0) +
+          states('sensor.microinverters_power_ac_total') | float(0) +
+          states('sensor.solarflow_pv_power_total') | float(0)
+        }}
+      availability: >
+        {{
+          has_value('sensor.solax_srgsgesgnc_ac_output_power') or
+          has_value('sensor.microinverters_power_ac_total') or
+          has_value('sensor.solarflow_pv_power_total')
+        }}

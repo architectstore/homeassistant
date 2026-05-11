@@ -9,12 +9,20 @@
           states('sensor.solarflow_800_pro_solar_power1') | float(0) +
           states('sensor.solarflow_800_pro_solar_power2') | float(0) +
           states('sensor.solarflow_800_pro_solar_power3') | float(0) +
-          states('sensor.solarflow_800_pro_solar_power4') | float(0)
+          states('sensor.solarflow_800_pro_solar_power4') | float(0) +
+          states('sensor.solarflow_800_pro_2_solar_power1') | float(0) +
+          states('sensor.solarflow_800_pro_2_solar_power2') | float(0) +
+          states('sensor.solarflow_800_pro_2_solar_power3') | float(0) +
+          states('sensor.solarflow_800_pro_2_solar_power4') | float(0)
         }}
       availability: >
         {{
-          states('sensor.solarflow_800_pro_solar_power1') not in ['unknown', 'unavailable', 'none'] and
-          states('sensor.solarflow_800_pro_solar_power2') not in ['unknown', 'unavailable', 'none'] and
-          states('sensor.solarflow_800_pro_solar_power3') not in ['unknown', 'unavailable', 'none'] and
-          states('sensor.solarflow_800_pro_solar_power4') not in ['unknown', 'unavailable', 'none']
+          has_value('sensor.solarflow_800_pro_solar_power1') or
+          has_value('sensor.solarflow_800_pro_solar_power2') or
+          has_value('sensor.solarflow_800_pro_solar_power3') or
+          has_value('sensor.solarflow_800_pro_solar_power4') or
+          has_value('sensor.solarflow_800_pro_2_solar_power1') or
+          has_value('sensor.solarflow_800_pro_2_solar_power2') or
+          has_value('sensor.solarflow_800_pro_2_solar_power3') or
+          has_value('sensor.solarflow_800_pro_2_solar_power4')
         }}
