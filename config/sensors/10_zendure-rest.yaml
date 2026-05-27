@@ -21,3 +21,12 @@
   unit_prefix: k
   round: 3
   method: left
+
+- platform: integration
+  source: sensor.solarflow_pv_power_total
+  name: "Solarflow Solar Energy"
+  unique_id: solarflow_solar_energy
+  unit_prefix: k
+  round: 3
+  method: left
+
