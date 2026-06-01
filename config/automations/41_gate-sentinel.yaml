@@ -25,7 +25,7 @@
       state: "on"
 
   action:
-    - service: notify.mobile_app_fcp_n49
+    - service: notify.mobile_app_v5
       data:
         title: "Sentinel alert"
         message: >-
@@ -42,3 +42,59 @@
           tag: sentinel_alert
           ttl: 0
           priority: high
+
+- id: sentinel_sync_blink
+  alias: Sentinel - Sync Blink with helper
+  description: Arm or disarm Blink immediately when Gate Sentinel is toggled
+  mode: single
+
+  trigger:
+    - platform: state
+      entity_id: input_boolean.gate_sentinel
+
+  action:
+    - choose:
+        - conditions:
+            - condition: state
+              entity_id: input_boolean.gate_sentinel
+              state: "on"
+          sequence:
+            - service: alarm_control_panel.alarm_arm_away
+              target:
+                entity_id: alarm_control_panel.blink_queijas_home
+
+        - conditions:
+            - condition: state
+              entity_id: input_boolean.gate_sentinel
+              state: "off"
+          sequence:
+            - service: alarm_control_panel.alarm_disarm
+              target:
+                entity_id: alarm_control_panel.blink_queijas_home
+
+- id: sentinel_blink_watchdog
+  alias: Sentinel - Re-arm Blink every 30 min
+  description: Re-arms Blink if Sentinel is enabled and Blink was disarmed externally
+  mode: single
+
+  trigger:
+    - platform: time_pattern
+      minutes: "/30"
+    - platform: homeassistant
+      event: start
+
+  condition:
+    - condition: state
+      entity_id: input_boolean.gate_sentinel
+      state: "on"
+
+    - condition: not
+      conditions:
+        - condition: state
+          entity_id: alarm_control_panel.blink_queijas_home
+          state: "armed_away"
+
+  action:
+    - service: alarm_control_panel.alarm_arm_away
+      target:
+        entity_id: alarm_control_panel.blink_queijas_home

@@ -1,20 +1,49 @@
 - id: ac_attic_cool_on_30
   alias: Attic AC - cool at 30C
   description: Set attic AC to cool 26C when room temperature goes above 30C
+  mode: single
+
   trigger:
     - platform: numeric_state
       entity_id: sensor.ac_attic_climatecontrol_room_temperature
       above: 30
+      id: ac_on
+
+    - platform: state
+      entity_id: climate.attic_room_temperature
+      to: "off"
+      id: ac_off
+
   condition: []
+
   action:
-    - service: climate.set_hvac_mode
-      target:
-        entity_id: climate.attic_room_temperature
-      data:
-        hvac_mode: cool
-    - service: climate.set_temperature
-      target:
-        entity_id: climate.attic_room_temperature
-      data:
-        temperature: 26
-  mode: single
+    - choose:
+        - conditions:
+            - condition: trigger
+              id: ac_on
+          sequence:
+            - service: climate.set_hvac_mode
+              target:
+                entity_id: climate.attic_room_temperature
+              data:
+                hvac_mode: cool
+
+            - service: climate.set_temperature
+              target:
+                entity_id: climate.attic_room_temperature
+              data:
+                temperature: 26
+
+            - service: notify.mobile_app_v5
+              data:
+                title: "Attic AC turned on"
+                message: "Attic temperature is above 30°C. AC set to cool at 26°C."
+
+        - conditions:
+            - condition: trigger
+              id: ac_off
+          sequence:
+            - service: notify.mobile_app_v5
+              data:
+                title: "Attic AC turned off"
+                message: "Attic AC was turned off."

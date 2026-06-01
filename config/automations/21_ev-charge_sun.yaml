@@ -58,7 +58,7 @@
               target:
                 entity_id: switch.ev_charger
 
-            - service: notify.mobile_app_fcp_n49
+            - service: notify.mobile_app_v5
               data:
                 title: "EV: Carregamento SOLAR INICIADO"
                 message: >-
@@ -81,7 +81,7 @@
               target:
                 entity_id: switch.ev_charger
 
-            - service: notify.mobile_app_fcp_n49
+            - service: notify.mobile_app_v5
               data:
                 title: "EV: Carregamento SOLAR PARADO"
                 message: >-
