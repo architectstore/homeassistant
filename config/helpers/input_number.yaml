@@ -9,9 +9,9 @@ solarflow_min_delta:
   icon: mdi:delta
 
 solarflow_discharge_last:
-  name: SolarFlow last discharge limit
+  name: SolarFlow last discharge limit (total both devices)
   min: 0
-  max: 800
+  max: 1600
   step: 10
   unit_of_measurement: W
   mode: box
@@ -19,9 +19,9 @@ solarflow_discharge_last:
   icon: mdi:battery-arrow-down
 
 solarflow_charge_last:
-  name: ALL SolarFlow last AC charge limit
+  name: ALL SolarFlow last AC charge limit (total both devices)
   min: 0
-  max: 1000
+  max: 2000
   step: 10
   unit_of_measurement: W
   mode: box

@@ -1,0 +1,44 @@
+# ============================================================================
+# SAFETY: Grid breaker guard – cut SolarFlow AC charge if import > 5000 W
+# Sustained for 1 minute to ignore transient spikes.
+# ============================================================================
+
+- id: solarflow_grid_breaker_guard
+  alias: "SolarFlow – Grid Breaker Guard (>5000 W × 1 min)"
+  description: >
+    Emergency stop: if grid import sustains above 5000 W for 1 full minute,
+    immediately cut all SolarFlow AC charging on both devices to protect the
+    utility breaker. Does not touch discharge — SolarFlow may already be helping
+    reduce import. Automation 12 will resume charging on its next 30-min cycle
+    if conditions allow (headroom check will prevent re-overload).
+  mode: single
+
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.shelly_phase_a_power_smoothed
+      above: 5000
+      for: "00:01:00"
+
+  action:
+    - service: number.set_value
+      target:
+        entity_id:
+          - number.solarflow_800_pro_input_limit
+          - number.solarflow_800_pro_2_input_limit
+      data:
+        value: 0
+      continue_on_error: true
+
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.solarflow_charge_last
+      data:
+        value: 0
+
+    - service: system_log.write
+      data:
+        level: warning
+        logger: solarflow_grid_control
+        message: >
+          ⚡ BREAKER GUARD: grid={{ states('sensor.shelly_phase_a_power_smoothed') }}W
+          sustained >5000 W for 1 min → cut all SolarFlow AC input

@@ -23,7 +23,9 @@
       id: pre_cutoff_plan
 
     - platform: state
-      entity_id: sensor.solarflow_800_pro_electric_level
+      entity_id:
+        - sensor.solarflow_800_pro_electric_level
+        - sensor.solarflow_800_pro_2_electric_level
       for: "00:00:20"
       id: soc_change
 
@@ -65,9 +67,14 @@
         - stop: "Window ended; cleared planned flag"
 
     - variables:
-        soc: "{{ states('sensor.solarflow_800_pro_electric_level') | float(0) }}"
+        soc: >-
+          {{ ((states('sensor.solarflow_800_pro_electric_level') | float(0)) +
+              (states('sensor.solarflow_800_pro_2_electric_level') | float(0))) / 2 }}
         last_charge: "{{ states('input_number.solarflow_charge_last') | float(0) | int }}"
-        charge_power: 600
+        charge_power: 1200
+        grid_headroom: >-
+          {{ [0, (5000 - (states('sensor.shelly_phase_a_power_smoothed') | float(0))) | int] | max }}
+        safe_charge_power: "{{ [charge_power | int, grid_headroom | int] | min }}"
         low_pv_soc_limit: "{{ states('input_number.solarflow_low_pv_soc_limit') | float(45) }}"
 
         # Use today's forecast (because after midnight it's already 'today')
@@ -111,31 +118,42 @@
           sequence:
             - stop: "Planning only (after 07:00)"
 
-        # B) In-window charge when planned
+        # B) In-window charge when planned and grid headroom allows
         - conditions:
             - condition: time
               after: "02:00:00"
               before: "07:00:00"
             - condition: template
               value_template: "{{ should_charge_low_pv }}"
+            - condition: template
+              value_template: "{{ safe_charge_power >= 200 }}"
           sequence:
             - service: select.select_option
               target:
-                entity_id: select.solarflow_800_pro_ac_mode
+                entity_id:
+                  - select.solarflow_800_pro_ac_mode
+                  - select.solarflow_800_pro_2_ac_mode
               data:
                 option: "input"
+              continue_on_error: true
 
             - service: number.set_value
               target:
-                entity_id: number.solarflow_800_pro_output_limit
+                entity_id:
+                  - number.solarflow_800_pro_output_limit
+                  - number.solarflow_800_pro_2_output_limit
               data:
                 value: 0
+              continue_on_error: true
 
             - service: number.set_value
               target:
-                entity_id: number.solarflow_800_pro_input_limit
+                entity_id:
+                  - number.solarflow_800_pro_input_limit
+                  - number.solarflow_800_pro_2_input_limit
               data:
-                value: "{{ charge_power }}"
+                value: "{{ (safe_charge_power / 2) | int }}"
+              continue_on_error: true
 
             - service: input_number.set_value
               target:
@@ -147,14 +165,14 @@
               target:
                 entity_id: input_number.solarflow_charge_last
               data:
-                value: "{{ charge_power }}"
+                value: "{{ safe_charge_power }}"
 
             - service: system_log.write
               data:
                 level: debug
                 logger: solarflow_grid_control
                 message: >
-                  🌙 CHARGE (LOW PV): {{ charge_power }}W | soc={{ soc }}%
+                  🌙 CHARGE (LOW PV): {{ safe_charge_power }}W (headroom={{ grid_headroom }}W) | soc={{ soc }}%
                   | pv_today={{ pv_today_kwh }}kWh | threshold={{ pv_threshold_kwh }}kWh
                   | planned={{ is_state('input_boolean.solarflow_night_charge_planned','on') }}
 
@@ -168,17 +186,23 @@
 
         - service: select.select_option
           target:
-            entity_id: select.solarflow_800_pro_ac_mode
+            entity_id:
+              - select.solarflow_800_pro_ac_mode
+              - select.solarflow_800_pro_2_ac_mode
           data:
             option: "output"
+          continue_on_error: true
 
         - service: number.set_value
           target:
             entity_id:
               - number.solarflow_800_pro_output_limit
               - number.solarflow_800_pro_input_limit
+              - number.solarflow_800_pro_2_output_limit
+              - number.solarflow_800_pro_2_input_limit
           data:
             value: 0
+          continue_on_error: true
 
         - service: input_number.set_value
           target:

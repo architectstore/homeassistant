@@ -38,14 +38,17 @@
           before: "08:00:00"
 
   action:
-    # Set both limits to zero
+    # Set all limits to zero (both devices)
     - service: number.set_value
       target:
         entity_id:
           - number.solarflow_800_pro_output_limit
           - number.solarflow_800_pro_input_limit
+          - number.solarflow_800_pro_2_output_limit
+          - number.solarflow_800_pro_2_input_limit
       data:
         value: 0
+      continue_on_error: true
 
     # Keep the "last" helpers in sync to avoid immediate delta-trigger on day start
     - service: input_number.set_value

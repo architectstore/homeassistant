@@ -100,7 +100,9 @@
   action:
     - variables:
         grid: "{{ states('sensor.shelly_phase_a_power_smoothed') | float(0) }}"
-        soc: "{{ states('sensor.solarflow_800_pro_electric_level') | float(50) }}"
+        soc: >-
+          {{ ((states('sensor.solarflow_800_pro_electric_level') | float(50)) +
+              (states('sensor.solarflow_800_pro_2_electric_level') | float(50))) / 2 }}
         last_discharge: "{{ states('input_number.solarflow_discharge_last') | float(0) | int }}"
         last_charge: "{{ states('input_number.solarflow_charge_last') | float(0) | int }}"
         soc_discharge_min: "{{ states('input_number.solarflow_soc_discharge_min') | float(25) | int }}"
@@ -118,10 +120,10 @@
 
 
 
-        # --- tuning ---
-        step_size: 50
-        max_discharge: 800
-        max_charge: 1000
+        # --- tuning (total across both devices; each device gets value / 2) ---
+        step_size: 100
+        max_discharge: 1600
+        max_charge: 2000
         min_delta: 40
 
         # -------------------------
@@ -278,9 +280,11 @@
                 entity_id:
                   - number.solarflow_800_pro_output_limit
                   - number.solarflow_800_pro_input_limit
+                  - number.solarflow_800_pro_2_output_limit
+                  - number.solarflow_800_pro_2_input_limit
               data:
                 value: 0
-              continue_on_error: false
+              continue_on_error: true
 
             - service: input_number.set_value
               target:
@@ -309,23 +313,30 @@
           sequence:
             - service: select.select_option
               target:
-                entity_id: select.solarflow_800_pro_ac_mode
+                entity_id:
+                  - select.solarflow_800_pro_ac_mode
+                  - select.solarflow_800_pro_2_ac_mode
               data:
                 option: "output"
+              continue_on_error: true
 
             - service: number.set_value
               target:
-                entity_id: number.solarflow_800_pro_output_limit
+                entity_id:
+                  - number.solarflow_800_pro_output_limit
+                  - number.solarflow_800_pro_2_output_limit
               data:
-                value: "{{ final_discharge | int }}"
-              continue_on_error: false
+                value: "{{ (final_discharge / 2) | round(0) | int }}"
+              continue_on_error: true
 
             - service: number.set_value
               target:
-                entity_id: number.solarflow_800_pro_input_limit
+                entity_id:
+                  - number.solarflow_800_pro_input_limit
+                  - number.solarflow_800_pro_2_input_limit
               data:
                 value: 0
-              continue_on_error: false
+              continue_on_error: true
 
             - service: input_number.set_value
               target:
@@ -344,7 +355,7 @@
                 level: info
                 logger: solarflow_grid_control
                 message: >
-                  "STEP100 DISCH: grid={{ grid }}W, soc={{ soc }}%, new={{ final_discharge }}W,
+                  "STEP100 DISCH: grid={{ grid }}W, soc={{ soc }}%, new={{ final_discharge }}W ({{ (final_discharge/2)|int }}W/device),
                   last={{ last_discharge }}W, delta={{ delta_dis }}W, trigger={{ trigger.id }}"
 
         # BRANCH B: CHARGE
@@ -362,23 +373,30 @@
           sequence:
             - service: select.select_option
               target:
-                entity_id: select.solarflow_800_pro_ac_mode
+                entity_id:
+                  - select.solarflow_800_pro_ac_mode
+                  - select.solarflow_800_pro_2_ac_mode
               data:
                 option: "input"
+              continue_on_error: true
 
             - service: number.set_value
               target:
-                entity_id: number.solarflow_800_pro_input_limit
+                entity_id:
+                  - number.solarflow_800_pro_input_limit
+                  - number.solarflow_800_pro_2_input_limit
               data:
-                value: "{{ final_charge | int }}"
-              continue_on_error: false
+                value: "{{ (final_charge / 2) | round(0) | int }}"
+              continue_on_error: true
 
             - service: number.set_value
               target:
-                entity_id: number.solarflow_800_pro_output_limit
+                entity_id:
+                  - number.solarflow_800_pro_output_limit
+                  - number.solarflow_800_pro_2_output_limit
               data:
                 value: 0
-              continue_on_error: false
+              continue_on_error: true
 
             - service: input_number.set_value
               target:
@@ -397,7 +415,7 @@
                 level: info
                 logger: solarflow_grid_control
                 message: >
-                  "STEP100 CHARGE: grid={{ grid }}W, soc={{ soc }}%, new={{ final_charge }}W,
+                  "STEP100 CHARGE: grid={{ grid }}W, soc={{ soc }}%, new={{ final_charge }}W ({{ (final_charge/2)|int }}W/device),
                   last={{ last_charge }}W, delta={{ delta_ch }}W, trigger={{ trigger.id }}"
 
       default:
@@ -413,9 +431,11 @@
             entity_id:
               - number.solarflow_800_pro_output_limit
               - number.solarflow_800_pro_input_limit
+              - number.solarflow_800_pro_2_output_limit
+              - number.solarflow_800_pro_2_input_limit
           data:
             value: 0
-          continue_on_error: false
+          continue_on_error: true
 
         - service: input_number.set_value
           target:
@@ -450,18 +470,23 @@
   action:
     - service: select.select_option
       target:
-        entity_id: select.solarflow_800_pro_ac_mode
+        entity_id:
+          - select.solarflow_800_pro_ac_mode
+          - select.solarflow_800_pro_2_ac_mode
       data:
         option: "output"
+      continue_on_error: true
 
     - service: number.set_value
       target:
         entity_id:
           - number.solarflow_800_pro_output_limit
           - number.solarflow_800_pro_input_limit
+          - number.solarflow_800_pro_2_output_limit
+          - number.solarflow_800_pro_2_input_limit
       data:
         value: 0
-      continue_on_error: false
+      continue_on_error: true
 
     - service: input_number.set_value
       target:
