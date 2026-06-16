@@ -71,10 +71,10 @@
           {{ ((states('sensor.solarflow_800_pro_electric_level') | float(0)) +
               (states('sensor.solarflow_800_pro_2_electric_level') | float(0))) / 2 }}
         last_charge: "{{ states('input_number.solarflow_charge_last') | float(0) | int }}"
-        charge_power: 1200
+        max_charge_power: 2000
         grid_headroom: >-
-          {{ [0, (5000 - (states('sensor.shelly_phase_a_power_smoothed') | float(0))) | int] | max }}
-        safe_charge_power: "{{ [charge_power | int, grid_headroom | int] | min }}"
+          {{ [0, (4500 - (states('sensor.shelly_phase_a_power_smoothed') | float(0))) | int] | max }}
+        safe_charge_power: "{{ [max_charge_power | int, grid_headroom | int] | min }}"
         low_pv_soc_limit: "{{ states('input_number.solarflow_low_pv_soc_limit') | float(45) }}"
 
         # Use today's forecast (because after midnight it's already 'today')
@@ -118,11 +118,14 @@
           sequence:
             - stop: "Planning only (after 07:00)"
 
-        # B) In-window charge when planned and grid headroom allows
+        # B) In-window charge when planned and grid headroom allows (22:00–08:00 low tariff)
         - conditions:
-            - condition: time
-              after: "02:00:00"
-              before: "07:00:00"
+            - condition: or
+              conditions:
+                - condition: time
+                  after: "22:00:00"
+                - condition: time
+                  before: "08:00:00"
             - condition: template
               value_template: "{{ should_charge_low_pv }}"
             - condition: template
@@ -178,9 +181,12 @@
 
       default:
         # In-window but not charging: if we were charging before, stop/idle
-        - condition: time
-          after: "02:00:00"
-          before: "07:00:00"
+        - condition: or
+          conditions:
+            - condition: time
+              after: "22:00:00"
+            - condition: time
+              before: "08:00:00"
         - condition: template
           value_template: "{{ (last_charge | int) != 0 }}"
 

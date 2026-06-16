@@ -68,10 +68,10 @@
         # Keep charging until 90 % once started (hysteresis via last_charge > 0).
         should_charge: >
           {{ soc < 90 and (soc < 50 or last_charge > 0) }}
-        charge_power: 2000   # W total (1000 W per device)
+        max_charge_power: 2000   # W total (1000 W per device)
         grid_headroom: >-
-          {{ [0, (5000 - (states('sensor.shelly_phase_a_power_smoothed') | float(0))) | int] | max }}
-        safe_charge_power: "{{ [charge_power | int, grid_headroom | int] | min }}"
+          {{ [0, (4500 - (states('sensor.shelly_phase_a_power_smoothed') | float(0))) | int] | max }}
+        safe_charge_power: "{{ [max_charge_power | int, grid_headroom | int] | min }}"
 
     - choose:
         # ----------------------
