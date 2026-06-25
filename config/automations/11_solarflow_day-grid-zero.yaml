@@ -2,9 +2,9 @@
 # GRID-ZERO CONTROLLER: Bidirectional discharge/charge (07:00–22:00)
 # ============================================================================
 #
-# Window: 07:00–22:00 (high tariff period)
-#   - 07:00–08:00: gate with SoC >= 75% (early morning, wait for PV)
-#   - 08:00–22:00: full grid-zero control (discharge on import, charge on solar export)
+# Window: 07:00–22:00 (high tariff period) — no SoC gate, always active
+#   - Can charge on solar export anytime (even if SoC low) from sunrise onwards
+#   - Can discharge on import to cover house load anytime
 #
 # Discharge floor: dynamic based on tariff
 #   - 08:00–22:00 (high tariff): allow discharge down to 5% SoC to minimize grid import
@@ -75,15 +75,6 @@
     - condition: time
       after: "07:00:00"
       before: "22:00:00"
-
-    # Early hour gate (07:00–08:00): require SoC >= 75% to start early
-    # After 08:00: no SoC gate, run normally
-    - condition: template
-      value_template: >
-        {% set t = now().strftime('%H:%M:%S') %}
-        {% set soc_val = ((states('sensor.solarflow_800_pro_electric_level') | float(50)) +
-                          (states('sensor.solarflow_800_pro_2_electric_level') | float(50))) / 2 %}
-        {{ (t >= '08:00:00') or (soc_val >= 75) }}
 
     # Entities available
     - condition: template
