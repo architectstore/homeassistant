@@ -1,7 +1,7 @@
 - binary_sensor:
     - name: "Grid Low Safe for EV"
       unique_id: grid_low_safe_ev
-      state: "{{ states('sensor.shelly_phase_a_power_smoothed') | float(0) < 1000 }}"
+      state: "{{ states('sensor.shelly_phase_a_power_smoothed') | float(0) < 2000 }}"
     - name: "Grid High Alert for EV"
       unique_id: grid_high_alert_ev
-      state: "{{ states('sensor.shelly_phase_a_power_smoothed') | float(0) > 4900 }}"
+      state: "{{ states('sensor.shelly_phase_a_power_smoothed') | float(0) > 4300 }}"
