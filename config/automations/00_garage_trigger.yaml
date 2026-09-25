@@ -12,5 +12,6 @@
   action:
     - action: notify.mobile_app_v5
       data:
-        message: "Garagem aberta"
+        message: >-
+          Garagem aberta ({{ now().strftime('%H:%M') }}).
   mode: single

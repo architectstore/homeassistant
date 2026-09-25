@@ -37,7 +37,8 @@
             - service: notify.mobile_app_v5
               data:
                 title: "Attic AC turned on"
-                message: "Attic temperature is above 30°C. AC set to cool at 26°C."
+                message: >-
+                  Attic temperature is above 30°C. AC set to cool at 26°C. ({{ now().strftime('%H:%M') }})
 
         - conditions:
             - condition: trigger
@@ -46,4 +47,5 @@
             - service: notify.mobile_app_v5
               data:
                 title: "Attic AC turned off"
-                message: "Attic AC was turned off."
+                message: >-
+                  Attic AC was turned off. ({{ now().strftime('%H:%M') }})

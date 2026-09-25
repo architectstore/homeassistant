@@ -38,6 +38,7 @@
           {% else %}
             Triggered by {{ trigger.to_state.name if trigger.to_state else trigger.entity_id }}.
           {% endif %}
+          ({{ now().strftime('%H:%M') }})
         data:
           tag: sentinel_alert
           ttl: 0
@@ -101,7 +102,7 @@
     - platform: state
       entity_id:
         - device_tracker.honor_2
-        - device_tracker.sonia_s_a56
+        - device_tracker.sonia_s_a56_4
       to: "not_home"
       for:
         minutes: 5
@@ -110,7 +111,7 @@
     - platform: state
       entity_id:
         - device_tracker.honor_2
-        - device_tracker.sonia_s_a56
+        - device_tracker.sonia_s_a56_4
       to: "home"
       id: home
 
@@ -125,7 +126,7 @@
               entity_id: device_tracker.honor_2
               state: "not_home"
             - condition: state
-              entity_id: device_tracker.sonia_s_a56
+              entity_id: device_tracker.sonia_s_a56_4
               state: "not_home"
           sequence:
             - service: input_boolean.turn_on
