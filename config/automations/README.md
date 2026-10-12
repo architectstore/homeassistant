@@ -14,10 +14,8 @@ are managed as a fleet: all power limits are tracked in **total watts** and spli
 |------|--------|-------------|
 | `00_garage_trigger.yaml` | Active | Notifies if the garage gate is open with no garage motion for 30 min. |
 | `01_garage_water.yaml` | Active | Notifies immediately on a garage water-leak detection. |
-| `10_solarflow_night-idle_disabled.yaml` | **DISABLED** | Legacy unconditional night idle enforcer (23:00–08:00). Replaced by auto 11's own condition gate. |
-| `11_solarflow_day-grid-zero.yaml` | **Active** | Core grid-zero controller. Only runs 07:00–22:00; discharges on import, charges on export. |
-| `12_solarflow_night-charge-weather.yaml` | **Active** | Plans a night grid-charge anytime; actually charges 02:00–07:00 when tomorrow's PV forecast is low. Power is headroom-capped to keep import ≤ 4500 W. |
-| `13_solarflow_night-charge_disabled.yaml` | **DISABLED** | Legacy unconditional SoC-based night charge (23:00–08:00). Same 4500 W headroom guard already in place if re-enabled. |
+| `11_solarflow_day-grid-zero.yaml` | **Active** | Core grid-zero controller. Runs 07:00–23:00; discharges on import, charges on export. Reserves export headroom for the EV before charging the battery. |
+| `12_solarflow_night-charge-weather.yaml` | **Active** | Plans a night grid-charge anytime; forces idle 23:00–00:30 (handoff from auto 11); charges 00:30–07:00 when tomorrow's PV forecast is low. Power is headroom-capped to keep import ≤ 4000 W and ramps gradually toward that target. |
 | `14_solaflow_health.yaml` | **Active** | Battery health management: adjusts `soc_charge_max` and `soc_discharge_min` based on full/deep cycle intervals. |
 | `15_solarflow_grid-breaker-guard.yaml` | **Active** | Emergency safety: cuts SolarFlow AC input if grid import sustains above 4400 W for 1 minute. |
 | `19_solarflow_debug.yaml` | **Active** | Logs discharge/charge limit changes at info level. |
@@ -29,7 +27,7 @@ are managed as a fleet: all power limits are tracked in **total watts** and spli
 | `50_ac-attic.yaml` | Active | Attic AC auto-cool at 26°C when attic temp > 30°C. |
 
 The remainder of this document covers the SolarFlow/EV energy automations
-(`10`–`21`) in detail.
+(`11`–`21`) in detail.
 
 ---
 
@@ -60,9 +58,9 @@ reading; negative = export, positive = import):
 
 | Layer | Where | Threshold | Behaviour |
 |---|---|---|---|
-| Proactive (headroom) | Auto 12 & 13 variables | **4500 W** | Dynamically caps charge power to `min(2000, 4500 − current_import)`. Skips the cycle if headroom < 200 W. |
-| Reactive (breaker guard) | Auto 15 | **4400 W × 1 min** | Cuts both devices' `input_limit` to 0. Does not touch discharge. Auto 12 resumes on its next 30‑min cycle if headroom allows. |
-| EV-specific | Auto 20 (via `templates/13_grid_safety.yaml`) | start < **2000 W**, stop > **4300 W** × 2 min | Independent of the SolarFlow guards above — gates whether the EV charger is allowed to run at night. |
+| Proactive (headroom) | Auto 12 variables | **4000 W** | Dynamically caps charge power to `min(2000, 4000 − current_import)`, ramped gradually toward that target (±200/600 W per ~1-min tick). Skips the cycle if headroom < 200 W. Kept well under the EV's 4300 W stop threshold so SolarFlow leaves real margin while both charge simultaneously overnight. |
+| Reactive (breaker guard) | Auto 15 | **4400 W × 1 min** | Cuts both devices' `input_limit` to 0. Does not touch discharge. Auto 12 resumes on its next ~1‑min cycle if headroom allows. |
+| EV-specific | Auto 20 (via `templates/13_grid_safety.yaml`) | start < **2000 W**, stop > **4300 W** × 2 min | Independent of the SolarFlow guards above — gates whether the EV charger is allowed to run at night. The 2-min sustain requirement is deliberate: it gives auto 12 time to ramp its own charge down before the EV would be force-stopped. |
 
 ---
 
@@ -70,9 +68,11 @@ reading; negative = export, positive = import):
 
 ### 11 — Grid-Zero Controller (active)
 
-**Window**: 07:00 → 22:00. The automation's own `condition` block gates
+**Window**: 07:00 → 23:00. The automation's own `condition` block gates
 execution to this window — it does not trigger or act outside it, regardless
-of the night-related variables computed inside its logic (see note below).
+of the night-related variables computed inside its logic. Extended from the
+old 22:00 cutoff so the 22:00–08:00 25%-floor discharge branch (below) is
+actually reachable for the 22:00–23:00 hour instead of being dead code.
 
 **Triggers**: grid > 75 W for 5 s, grid < ‑100 W for 10 s, every 1 min, time
 edges (07:00, 08:00, 22:00), HA start.
@@ -82,6 +82,7 @@ edges (07:00, 08:00, 22:00), HA start.
 - `max_discharge`: 1600 W
 - `max_charge`: 2000 W (solar export absorption only)
 - `min_delta`: 40 W (hysteresis before applying a new limit)
+- `ev_reserve_w`: 2500 W — see EV priority below
 
 **Decision flow (in priority order)**:
 
@@ -90,8 +91,8 @@ edges (07:00, 08:00, 22:00), HA start.
    flag (22:00–08:00) is true AND PV forecast < 10 kWh AND SoC ≤
    `solarflow_evening_soc_min` (45%). In practice the second branch can only
    ever be true in the narrow overlap where the automation is still inside its
-   07:00–22:00 condition window (i.e. right at the 22:00 edge trigger), since
-   the automation does not run at all outside that window.
+   07:00–23:00 condition window (i.e. the 22:00–23:00 hour), since the
+   automation does not run at all outside that window.
 
 2. **Branch A — Discharge**: grid > 120 W AND SoC above the effective floor
    (5% during 08:00–22:00 "high tariff"; `solarflow_soc_discharge_min` — 25%
@@ -99,25 +100,37 @@ edges (07:00, 08:00, 22:00), HA start.
    `final_discharge / 2`.
 
 3. **Branch B — Solar charge**: grid < ‑80 W AND sun is up (sunrise+30 min →
-   sunset‑30 min) → stepped input up to 2000 W total.
+   sunset‑30 min) → stepped input up to 2000 W total, capped by `charge_cap`
+   (see EV priority below).
 
 4. **Default — Idle**: both targets zero and state needs resetting.
 
+**EV export priority**: while `binary_sensor.ev_charger_connectivity` and
+`input_boolean.ev_charge_enable` are both on and `switch.ev_charger` is off
+(the EV is a candidate to start solar-charging but hasn't yet — see auto 21),
+the battery's charge target is capped at `raw_surplus - ev_reserve_w` once
+raw pre-battery surplus (`last_charge - grid`) exceeds 2500 W, leaving that
+headroom visible as export so the EV can reach its own -2500 W start
+threshold instead of the battery claiming it first. Once the EV actually
+starts drawing, the cap lifts and the battery is free to use any leftover
+surplus.
+
 **Note on night behaviour**: because the automation's `condition` restricts it
-to 07:00–22:00, nothing in this file adjusts the SolarFlow limits between
-22:00 and 07:00. Whatever discharge/charge value was last written before the
-window closed stays in effect until auto 12 (charging window) or auto 15
+to 07:00–23:00, nothing in this file adjusts the SolarFlow limits between
+23:00 and 07:00. Whatever discharge/charge value was last written before the
+window closed stays in effect until auto 12 (idle/charging window) or auto 15
 (breaker guard) changes it, or auto 11 restarts the following day at 07:00.
 
 ---
 
 ### 12 — Night Charge Weather (active)
 
-**Purpose**: Charge both batteries from the grid during low-tariff hours when
+**Purpose**: Idle the batteries during the 23:00–00:30 handoff gap, then
+charge both batteries from the grid during low-tariff hours when
 today's/tomorrow's PV forecast is low.
 
-**Planning phase** (runs any time, every 30 min + on SoC change + at 01:50 to
-refresh just before auto 11's old cutoff):
+**Planning phase** (runs any time, every 1 min + on SoC change + at 00:20 to
+refresh just before the acting window opens):
 - Reads `sensor.solar_production_estimate_today_total` (sum of 4 PV forecast
   sensors, see `templates/11_solar.yaml`)
 - If forecast < `solarflow_pv_threshold_kwh` (5 kWh) AND avg SoC < 70% AND
@@ -126,30 +139,34 @@ refresh just before auto 11's old cutoff):
 - This flag is also read by auto 11's (currently unreachable — see above)
   night-idle branch.
 
-**Charge window (acts on the inverter)**: **02:00–07:00** only. Outside that
-window the automation only updates the planning flag; it explicitly `stop`s
-before touching any inverter entity.
+**Idle window (acts on the inverter)**: **23:00–00:30**. Explicit handoff
+enforcement — zeroes both charge and discharge helpers/limits if either was
+left nonzero by auto 11. Backed by a hard-edge trigger at 23:00 plus the
+1-min periodic tick.
 
-**Dynamic power (evaluated every cycle, inside 02:00–07:00)**:
+**Charge window (acts on the inverter)**: **00:30–07:00** only. Outside
+23:00–07:00 the automation only updates the planning flag; it explicitly
+`stop`s before touching any inverter entity.
+
+**Dynamic power (evaluated every ~1-min cycle, inside 00:30–07:00)**:
 ```
-grid_headroom     = max(0, 4500 − current_grid_import)
-safe_charge_power = min(2000, grid_headroom)
-per_device_limit  = safe_charge_power / 2
+grid_headroom     = max(0, 4000 − current_grid_import)
+safe_charge_power = min(2000, grid_headroom)          # instantaneous desired target
+target_charge     = ramp(safe_charge_power, previous) # +200 W/tick up, -600 W/tick down,
+                                                        # immediate if starting from 0
+per_device_limit  = target_charge / 2
 ```
 - Skips charging if `safe_charge_power < 200 W`
+- Reacts fast: a state-trigger on the grid sensor (5 s debounce) plus a 1-min
+  periodic tick, not just the 30-min planning cycle
+- Ramps gradually toward the headroom target rather than jumping straight to
+  it (faster ramp-down than ramp-up, since backing off is the safety-relevant
+  direction); starts at full target immediately if coming from a stop (0 W)
 - Accounts for EV charging automatically (EV import reduces headroom →
   SolarFlow charge backs off)
-- Stores `safe_charge_power` (total) in `solarflow_charge_last` so auto 11's
-  math stays consistent
+- Stores `target_charge` (total, the ramped value) in `solarflow_charge_last`
+  so auto 11's math stays consistent
 - At 07:00 the plan flag is cleared (`solarflow_night_charge_planned = OFF`)
-
----
-
-### 13 — Night Charge Unconditional (DISABLED)
-
-Charges at up to 2000 W total when SoC < 50%, stops at 90%. Active 23:00–08:00.
-Same 4500 W headroom guard as auto 12 is already implemented. Re-enable if you
-want an unconditional SoC-floor charge separate from the weather-based logic.
 
 ---
 
@@ -178,7 +195,7 @@ two-device average used elsewhere.
 `solarflow_charge_last`. Does **not** touch `output_limit` — discharge
 continues to help reduce import.
 
-**Recovery**: Auto 12 re-evaluates on its next 30-min cycle. The headroom
+**Recovery**: Auto 12 re-evaluates on its next ~1-min cycle. The headroom
 check prevents immediate re-overload.
 
 ---
@@ -223,7 +240,7 @@ This file has **two** automations:
 | `input_number.solarflow_discharge_last` | 0 (max 1600) | Total discharge limit last set (both devices) |
 | `input_number.solarflow_charge_last` | 0 (max 2000) | Total charge limit last set (both devices) |
 | `input_number.solarflow_soc_discharge_min` | 10 | Absolute SoC floor for discharge (managed by auto 14, default overridden by it) |
-| `input_number.solarflow_evening_soc_min` | 45 | SoC floor for post-22:00 idle decision in auto 11 |
+| `input_number.solarflow_evening_soc_min` | 45 | SoC floor for the 22:00–23:00 idle decision in auto 11 |
 | `input_number.solarflow_soc_charge_max` | 100 | Max SoC for solar charge absorption (managed by auto 14) |
 | `input_number.solarflow_pv_threshold_kwh` | 5 | PV forecast threshold to trigger night charge |
 | `input_number.solarflow_low_pv_soc_limit` | 40 | SoC limit for the low-PV charge decision |
@@ -237,18 +254,27 @@ This file has **two** automations:
 
 - **Check traces**: Developer Tools → Traces → `solarflow_day_grid_zero_step_100w`
   for IDLE / branch-taken reasons.
-- **Auto 11 stops at 22:00**: it does not idle the batteries at night itself —
-  see the note under "11 — Grid-Zero Controller" above. A discharge limit set
-  just before 22:00 can persist overnight until auto 12 or 15 touches it.
-- **EV + SolarFlow overlap**: if both EV and SolarFlow charge simultaneously
-  at night, the headroom logic in auto 12 backs off the SolarFlow charge.
-  Auto 15 is the final backstop at 4400 W for SolarFlow; auto 20's own
-  4300 W/2 min alert is the backstop for the EV charger.
+- **Auto 11 stops at 23:00**: it does not idle the batteries at night itself —
+  see the note under "11 — Grid-Zero Controller" above. Auto 12's
+  23:00–00:30 branch picks up the handoff immediately (hard-edge trigger at
+  23:00), so there should be no ungoverned gap in normal operation.
+- **EV + SolarFlow overlap (daytime, export)**: automation 11 reserves 2500 W
+  of export for the EV before charging the battery (see "EV export priority"
+  above), so the battery no longer races the EV for solar surplus.
+- **EV + SolarFlow overlap (nighttime, import)**: if both EV and SolarFlow
+  charge simultaneously at night, the headroom logic in auto 12 backs off the
+  SolarFlow charge (gradually, via its ramp). Auto 15 is the final backstop
+  at 4400 W for SolarFlow; auto 20's own 4300 W/2 min alert is the backstop
+  for the EV charger.
 - **Shelly sign convention**: negative = export, positive = import. If
   inverted, reverse all thresholds in autos 11, 12, 15, 20, and 21.
 - **Device 2 offline**: SoC defaults to 50% (or 0% in auto 12) average;
   service calls use `continue_on_error: true` so the controllers keep running
   on device 1 alone.
-- **`planned` flag timing**: auto 12 sets `planned` throughout the day. If the
-  forecast changes close to 22:00, auto 12 reacts on its next 30-min planning
-  cycle or the 01:50 pre-cutoff refresh.
+- **`planned` flag timing**: auto 12 sets `planned` throughout the day on a
+  1-min cycle (plus SoC-change and the 00:20 pre-cutoff refresh), so it stays
+  fresh right up to when the acting window opens at 00:30.
+- **10 and 13 were removed (2026-10-11)**: both were long-disabled legacy
+  night-idle/night-charge automations, superseded by auto 11's own window and
+  auto 12's handoff-idle branch. If you see references to them in old traces
+  or notes, they no longer exist.

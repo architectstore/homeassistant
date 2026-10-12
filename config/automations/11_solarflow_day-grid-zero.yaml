@@ -1,10 +1,17 @@
 # ============================================================================
-# GRID-ZERO CONTROLLER: Bidirectional discharge/charge (07:00–22:00)
+# GRID-ZERO CONTROLLER: Bidirectional discharge/charge (07:00–23:00)
 # ============================================================================
 #
-# Window: 07:00–22:00 (high tariff period) — no SoC gate, always active
+# Window: 07:00–23:00 — no SoC gate, always active
 #   - Can charge on solar export anytime (even if SoC low) from sunrise onwards
 #   - Can discharge on import to cover house load anytime
+#   - Extended to 23:00 (was 22:00) so the 22:00–08:00 low-tariff 25%-floor
+#     branch below actually gets to run for the 22:00–23:00 hour, instead of
+#     being dead code (the outer window used to cut off exactly at 22:00).
+#   - NOTE: no automation governs output/input limits between 23:00 and 02:00
+#     (automation 12 only touches the inverter inside its own 02:00–07:00
+#     window) — whatever this automation last set at 23:00 just persists
+#     until then. Known gap, not yet addressed.
 #
 # Discharge floor: dynamic based on tariff
 #   - 08:00–22:00 (high tariff): allow discharge down to 5% SoC to minimize grid import
@@ -13,6 +20,12 @@
 # Night (22:00–08:00): auto 11 idles if:
 #   - Auto 12 is actively charging (last_charge > 0), OR
 #   - PV forecast < 10 kWh AND SoC <= 45% (preserve battery for low-PV day)
+#
+# EV priority: while the EV is connected, enabled, and not yet charging,
+# reserve up to ev_reserve_w of raw solar surplus for it (see automation 21's
+# -2500W start threshold) so the battery doesn't claim export the EV could
+# use to start a solar-charge session. Once the EV is actually charging,
+# the reservation drops and the battery is free to use any leftover surplus.
 #
 # ============================================================================
 
@@ -71,10 +84,10 @@
       id: ha_startup
 
   condition:
-    # Active window: 07:00–22:00 (high tariff hours)
+    # Active window: 07:00–23:00
     - condition: time
       after: "07:00:00"
-      before: "22:00:00"
+      before: "23:00:00"
 
     # Entities available
     - condition: template
@@ -98,6 +111,21 @@
               (states('sensor.solarflow_800_pro_2_electric_level') | float(50))) / 2 }}
         last_discharge: "{{ states('input_number.solarflow_discharge_last') | float(0) | int }}"
         last_charge: "{{ states('input_number.solarflow_charge_last') | float(0) | int }}"
+
+        # --- EV export priority ---
+        # Reserve export headroom for the EV (automation 21 starts solar-charging
+        # at -2500W sustained) while it's connected/enabled and not yet charging.
+        # Once it's actually charging, drop the reservation and let the battery
+        # use whatever surplus is left.
+        ev_reserve_w: 2500
+        ev_ready_to_start: >-
+          {{ is_state('binary_sensor.ev_charger_connectivity', 'on')
+             and is_state('input_boolean.ev_charge_enable', 'on')
+             and is_state('switch.ev_charger', 'off') }}
+        # Raw pre-battery solar surplus: grid reading already reflects the
+        # battery's own last charge action, so add it back to see the true surplus.
+        raw_surplus: "{{ (last_charge - grid) | round(0) | int }}"
+
         soc_discharge_min: "{{ states('input_number.solarflow_soc_discharge_min') | float(25) | int }}"
         soc_charge_max: "{{ states('input_number.solarflow_soc_charge_max') | float(90) | int }}"
 
@@ -127,6 +155,15 @@
         max_discharge: 1600
         max_charge: 2000
         min_delta: 40
+
+        # EV reservation cap, now that max_charge is known (see EV export
+        # priority note above)
+        charge_cap: >-
+          {% if ev_ready_to_start and raw_surplus > ev_reserve_w %}
+            {{ raw_surplus - ev_reserve_w }}
+          {% else %}
+            {{ max_charge }}
+          {% endif %}
 
         # -------------------------
         # IMPORT → DISCHARGE target
@@ -249,7 +286,7 @@
           {% set tc = target_charge | int %}
           {% set sun_state = states('sun.sun') %}
           {% set can_daycharge = (sun_state == 'above_horizon') %}
-          {% set max_ch = max_charge | int %}
+          {% set max_ch = charge_cap | int %}
           {% set step = step_size | int %}
           {% if g <= -80 and can_daycharge %}
             {% set fc = tc %}
@@ -436,7 +473,8 @@
                 logger: solarflow_grid_control
                 message: >
                   "STEP100 CHARGE: grid={{ grid }}W, soc={{ soc }}%, new={{ final_charge }}W ({{ (final_charge/2)|int }}W/device),
-                  last={{ last_charge }}W, delta={{ delta_ch }}W, trigger={{ trigger.id }}"
+                  last={{ last_charge }}W, delta={{ delta_ch }}W, charge_cap={{ charge_cap }}W (ev_reserve={{ ev_ready_to_start }}),
+                  trigger={{ trigger.id }}"
 
       default:
         # DEFAULT: IDLE (both 0) – only when both targets are zero

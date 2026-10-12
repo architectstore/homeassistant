@@ -1,25 +1,37 @@
 # ============================================================================
 # NIGHT: Charge SolarFlow from grid when today's PV forecast is low
-# Plan anytime (sets helper), act only 02:00–07:00 (touches inverter)
+# Plan anytime (sets helper), act only 00:30–07:00 (touches inverter)
 # Helper used by automation 11: input_boolean.solarflow_night_charge_planned
+#
+# 23:00–00:30: explicit idle enforcement (handoff gap after automation 11
+# stops at 23:00 and before this automation's own acting window starts).
+# Moved the acting window start from 02:00 to 00:30 — the weather forecast
+# sensor doesn't need to wait until 02:00 to be accurate enough to act on.
 # ============================================================================
 
 - id: solarflow_night_charge_low_pv_forecast
-  alias: "SolarFlow – Plan/Charge on Low PV Forecast (plan anytime; charge 02:00–07:00)"
+  alias: "SolarFlow – Plan/Charge on Low PV Forecast (plan anytime; idle 23:00–00:30; charge 00:30–07:00)"
   description: >
     Plans grid charge by setting input_boolean.solarflow_night_charge_planned anytime.
-    Actually charges SolarFlow from the grid at 600 W only during 02:00–07:00 when
+    Forces idle during 23:00–00:30 (handoff gap from automation 11).
+    Actually charges SolarFlow from the grid at 600 W only during 00:30–07:00 when
     PV forecast is low and SoC is below the configured limit.
   mode: restart
 
   trigger:
     - platform: time_pattern
-      minutes: "/30"
+      minutes: "/1"
       id: planning_periodic
 
-    # Smart: force a plan refresh shortly before 11's 01:59:30 cutoff
+    # Fast reaction to other night loads changing the available headroom
+    - platform: state
+      entity_id: sensor.shelly_phase_a_power_smoothed
+      for: "00:00:05"
+      id: grid_change
+
+    # Force a plan refresh shortly before the acting window opens
     - platform: time
-      at: "01:50:00"
+      at: "00:20:00"
       id: pre_cutoff_plan
 
     - platform: state
@@ -29,8 +41,13 @@
       for: "00:00:20"
       id: soc_change
 
+    # Hard edge: start of the 23:00–00:30 idle handoff window
     - platform: time
-      at: "02:00:00"
+      at: "23:00:00"
+      id: idle_window_start
+
+    - platform: time
+      at: "00:30:00"
       id: window_start
 
     - platform: time
@@ -72,9 +89,31 @@
               (states('sensor.solarflow_800_pro_2_electric_level') | float(0))) / 2 }}
         last_charge: "{{ states('input_number.solarflow_charge_last') | float(0) | int }}"
         max_charge_power: 2000
+        # Ceiling kept well under the EV's 4300W stop threshold (and the 4400W
+        # breaker guard) so SolarFlow leaves real margin at steady state while
+        # both it and the EV are drawing from the grid overnight.
+        grid_ceiling: 4000
         grid_headroom: >-
-          {{ [0, (4500 - (states('sensor.shelly_phase_a_power_smoothed') | float(0))) | int] | max }}
+          {{ [0, (grid_ceiling - (states('sensor.shelly_phase_a_power_smoothed') | float(0))) | int] | max }}
         safe_charge_power: "{{ [max_charge_power | int, grid_headroom | int] | min }}"
+
+        # --- ramp control: move toward the headroom-based target gradually
+        # instead of jumping straight to it. Ramp down faster than up since
+        # backing off is the safety-relevant direction (another load grabbed
+        # the headroom); automation 15 remains the hard backstop regardless.
+        ramp_up_step: 200
+        ramp_down_step: 600
+        target_charge: >-
+          {% set prev = last_charge %}
+          {% set desired = safe_charge_power | int %}
+          {% if prev == 0 %}
+            {{ desired }}
+          {% elif desired >= prev %}
+            {{ [desired, prev + ramp_up_step] | min }}
+          {% else %}
+            {{ [desired, prev - ramp_down_step] | max }}
+          {% endif %}
+
         low_pv_soc_limit: "{{ states('input_number.solarflow_low_pv_soc_limit') | float(45) }}"
 
         # Use today's forecast (because after midnight it's already 'today')
@@ -105,12 +144,52 @@
       default: []
 
     - choose:
+        # 0) Explicit idle enforcement for the 23:00–00:30 handoff gap
+        #    (automation 11 stops acting at 23:00; this automation's own
+        #    acting window doesn't open until 00:30).
+        - conditions:
+            - condition: time
+              after: "23:00:00"
+              before: "00:30:00"
+          sequence:
+            - if:
+                - condition: template
+                  value_template: >
+                    {{ (last_charge | int) != 0 or (states('input_number.solarflow_discharge_last') | float(0) | int) != 0 }}
+              then:
+                - service: number.set_value
+                  target:
+                    entity_id:
+                      - number.solarflow_800_pro_output_limit
+                      - number.solarflow_800_pro_input_limit
+                      - number.solarflow_800_pro_2_output_limit
+                      - number.solarflow_800_pro_2_input_limit
+                  data:
+                    value: 0
+                  continue_on_error: true
+
+                - service: input_number.set_value
+                  target:
+                    entity_id:
+                      - input_number.solarflow_discharge_last
+                      - input_number.solarflow_charge_last
+                  data:
+                    value: 0
+
+                - service: system_log.write
+                  data:
+                    level: debug
+                    logger: solarflow_grid_control
+                    message: >
+                      "🌙 HANDOFF IDLE (23:00–00:30): Discharge=0W, Charge=0W. Trigger: {{ trigger.id }}"
+            - stop: "Idle handoff window (23:00–00:30)"
+
         # A) Plan-only outside the window (don’t touch inverter)
         - conditions:
             - condition: time
-              before: "02:00:00"
+              before: "00:30:00"
           sequence:
-            - stop: "Planning only (before 02:00)"
+            - stop: "Planning only (before 00:30)"
 
         - conditions:
             - condition: time
@@ -155,7 +234,7 @@
                   - number.solarflow_800_pro_input_limit
                   - number.solarflow_800_pro_2_input_limit
               data:
-                value: "{{ (safe_charge_power / 2) | int }}"
+                value: "{{ (target_charge / 2) | int }}"
               continue_on_error: true
 
             - service: input_number.set_value
@@ -168,14 +247,15 @@
               target:
                 entity_id: input_number.solarflow_charge_last
               data:
-                value: "{{ safe_charge_power }}"
+                value: "{{ target_charge | int }}"
 
             - service: system_log.write
               data:
                 level: debug
                 logger: solarflow_grid_control
                 message: >
-                  🌙 CHARGE (LOW PV): {{ safe_charge_power }}W (headroom={{ grid_headroom }}W) | soc={{ soc }}%
+                  🌙 CHARGE (LOW PV): target={{ target_charge }}W (desired={{ safe_charge_power }}W,
+                  headroom={{ grid_headroom }}W) | soc={{ soc }}%
                   | pv_today={{ pv_today_kwh }}kWh | threshold={{ pv_threshold_kwh }}kWh
                   | planned={{ is_state('input_boolean.solarflow_night_charge_planned','on') }}
 
