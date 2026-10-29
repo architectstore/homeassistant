@@ -89,10 +89,10 @@
               (states('sensor.solarflow_800_pro_2_electric_level') | float(0))) / 2 }}
         last_charge: "{{ states('input_number.solarflow_charge_last') | float(0) | int }}"
         max_charge_power: 2000
-        # Ceiling kept well under the EV's 4300W stop threshold (and the 4400W
+        # Ceiling kept well under the EV's 4500W stop threshold (and the 4400W
         # breaker guard) so SolarFlow leaves real margin at steady state while
         # both it and the EV are drawing from the grid overnight.
-        grid_ceiling: 4000
+        grid_ceiling: 4100
         grid_headroom: >-
           {{ [0, (grid_ceiling - (states('sensor.shelly_phase_a_power_smoothed') | float(0))) | int] | max }}
         safe_charge_power: "{{ [max_charge_power | int, grid_headroom | int] | min }}"

@@ -15,7 +15,7 @@ are managed as a fleet: all power limits are tracked in **total watts** and spli
 | `00_garage_trigger.yaml` | Active | Notifies if the garage gate is open with no garage motion for 30 min. |
 | `01_garage_water.yaml` | Active | Notifies immediately on a garage water-leak detection. |
 | `11_solarflow_day-grid-zero.yaml` | **Active** | Core grid-zero controller. Runs 07:00–23:00; discharges on import, charges on export. Reserves export headroom for the EV before charging the battery. |
-| `12_solarflow_night-charge-weather.yaml` | **Active** | Plans a night grid-charge anytime; forces idle 23:00–00:30 (handoff from auto 11); charges 00:30–07:00 when tomorrow's PV forecast is low. Power is headroom-capped to keep import ≤ 4000 W and ramps gradually toward that target. |
+| `12_solarflow_night-charge-weather.yaml` | **Active** | Plans a night grid-charge anytime; forces idle 23:00–00:30 (handoff from auto 11); charges 00:30–07:00 when tomorrow's PV forecast is low. Power is headroom-capped to keep import ≤ 4100 W and ramps gradually toward that target. |
 | `14_solaflow_health.yaml` | **Active** | Battery health management: adjusts `soc_charge_max` and `soc_discharge_min` based on full/deep cycle intervals. |
 | `15_solarflow_grid-breaker-guard.yaml` | **Active** | Emergency safety: cuts SolarFlow AC input if grid import sustains above 4400 W for 1 minute. |
 | `19_solarflow_debug.yaml` | **Active** | Logs discharge/charge limit changes at info level. |
@@ -58,9 +58,9 @@ reading; negative = export, positive = import):
 
 | Layer | Where | Threshold | Behaviour |
 |---|---|---|---|
-| Proactive (headroom) | Auto 12 variables | **4000 W** | Dynamically caps charge power to `min(2000, 4000 − current_import)`, ramped gradually toward that target (±200/600 W per ~1-min tick). Skips the cycle if headroom < 200 W. Kept well under the EV's 4300 W stop threshold so SolarFlow leaves real margin while both charge simultaneously overnight. |
+| Proactive (headroom) | Auto 12 variables | **4100 W** | Dynamically caps charge power to `min(2000, 4100 − current_import)`, ramped gradually toward that target (±200/600 W per ~1-min tick). Skips the cycle if headroom < 200 W. Kept below the SolarFlow's 4400 W breaker guard and the EV's 4500 W stop threshold. |
 | Reactive (breaker guard) | Auto 15 | **4400 W × 1 min** | Cuts both devices' `input_limit` to 0. Does not touch discharge. Auto 12 resumes on its next ~1‑min cycle if headroom allows. |
-| EV-specific | Auto 20 (via `templates/13_grid_safety.yaml`) | start < **2000 W**, stop > **4300 W** × 2 min | Independent of the SolarFlow guards above — gates whether the EV charger is allowed to run at night. The 2-min sustain requirement is deliberate: it gives auto 12 time to ramp its own charge down before the EV would be force-stopped. |
+| EV-specific | Auto 20 (via `templates/13_grid_safety.yaml`) | start < **2000 W**, stop > **4500 W** × 2 min | Independent of the SolarFlow guards above — gates whether the EV charger is allowed to run at night. The 2-min sustain requirement is deliberate: it gives auto 12 time to ramp its own charge down before the EV would be force-stopped. |
 
 ---
 
@@ -150,7 +150,7 @@ left nonzero by auto 11. Backed by a hard-edge trigger at 23:00 plus the
 
 **Dynamic power (evaluated every ~1-min cycle, inside 00:30–07:00)**:
 ```
-grid_headroom     = max(0, 4000 − current_grid_import)
+grid_headroom     = max(0, 4100 − current_grid_import)
 safe_charge_power = min(2000, grid_headroom)          # instantaneous desired target
 target_charge     = ramp(safe_charge_power, previous) # +200 W/tick up, -600 W/tick down,
                                                         # immediate if starting from 0
@@ -218,7 +218,7 @@ This file has **two** automations:
      connected, no charger fault. Sets current to 10 A, waits 5 s, then turns
      the charger on.
    - **Emergency stop**: if `binary_sensor.grid_high_alert_ev` (grid draw >
-     4300 W) holds for 2 minutes while charging, turns the charger off.
+     4500 W) holds for 2 minutes while charging, turns the charger off.
    - **Scheduled stop**: unconditionally turns the charger off at 08:00 (if
      still on and enabled).
 
@@ -264,7 +264,7 @@ This file has **two** automations:
 - **EV + SolarFlow overlap (nighttime, import)**: if both EV and SolarFlow
   charge simultaneously at night, the headroom logic in auto 12 backs off the
   SolarFlow charge (gradually, via its ramp). Auto 15 is the final backstop
-  at 4400 W for SolarFlow; auto 20's own 4300 W/2 min alert is the backstop
+  at 4400 W for SolarFlow; auto 20's own 4500 W/2 min alert is the backstop
   for the EV charger.
 - **Shelly sign convention**: negative = export, positive = import. If
   inverted, reverse all thresholds in autos 11, 12, 15, 20, and 21.
