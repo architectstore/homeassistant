@@ -45,7 +45,7 @@ solarflow_soc_discharge_min:
   step: 1
   unit_of_measurement: "%"
   mode: slider
-  initial: 10
+  initial: 25
   icon: mdi:battery-arrow-down
 
 solarflow_soc_charge_max:

@@ -2,24 +2,20 @@
 # GRID-ZERO CONTROLLER: Bidirectional discharge/charge (07:00–23:00)
 # ============================================================================
 #
-# Window: 07:00–23:00 — no SoC gate, always active
+# Window: 07:00–23:00 — active grid-zero control with per-battery SoC gates
 #   - Can charge on solar export anytime (even if SoC low) from sunrise onwards
-#   - Can discharge on import to cover house load anytime
-#   - Extended to 23:00 (was 22:00) so the 22:00–08:00 low-tariff 25%-floor
-#     branch below actually gets to run for the 22:00–23:00 hour, instead of
-#     being dead code (the outer window used to cut off exactly at 22:00).
-#   - NOTE: no automation governs output/input limits between 23:00 and 02:00
-#     (automation 12 only touches the inverter inside its own 02:00–07:00
-#     window) — whatever this automation last set at 23:00 just persists
-#     until then. Known gap, not yet addressed.
+#   - Can discharge on import while each battery is above its configured floor
+#   - Automation 12 takes over at 23:00: idle 23:00–00:30, then charge/idle
+#     00:30–07:00 according to forecast and grid headroom.
 #
-# Discharge floor: dynamic based on tariff
-#   - 08:00–22:00 (high tariff): allow discharge down to 5% SoC to minimize grid import
-#   - 22:00–08:00 (low tariff): protect at 25% SoC (unless auto 12 is charging)
+# Discharge floors:
+#   - All day: protect solarflow_soc_discharge_min independently per battery
+#   - 22:00–23:00 with forecast < 10 kWh: protect solarflow_evening_soc_min
+#     independently per battery
 #
-# Night (22:00–08:00): auto 11 idles if:
-#   - Auto 12 is actively charging (last_charge > 0), OR
-#   - PV forecast < 10 kWh AND SoC <= 45% (preserve battery for low-PV day)
+# Night (22:00–08:00):
+#   - Idle both batteries if auto 12 is charging.
+#   - On a low-PV forecast, stop each battery independently when it reaches 45%.
 #
 # EV priority: while the EV is connected, enabled, and not yet charging,
 # reserve up to ev_reserve_w of raw solar surplus for it (see automation 21's
@@ -33,12 +29,13 @@
 # MAIN GRID-ZERO CONTROLLER
 # ----------------------------------------------------------------------------
 - id: solarflow_day_grid_zero_step_100w
-  alias: "SolarFlow – Grid-Zero 100W Steps (08:00–22:00; discharge to 5% on high tariff)"
+  alias: "SolarFlow – Grid-Zero 100W Steps (configurable minimum SoC floor)"
   description: >
     Keep Shelly Phase A around 0W using 100W step control.
     Discharges to cover house load (avoid grid import). Charges from solar export (sunrise–sunset).
-    During high tariff (08:00–22:00), allows discharge down to 5% SoC to minimize grid consumption.
-    Idles at night if auto 12 is charging or if low PV forecast + low SoC.
+    Maintains the configured minimum SoC floor while discharging to minimize grid consumption.
+    Idles both batteries if auto 12 is charging. During low-PV nights, enforces
+    the evening SoC floor independently for each battery.
   mode: restart
   trace:
     stored_traces: 720  # ~12h if it triggers every minute
@@ -106,6 +103,8 @@
   action:
     - variables:
         grid: "{{ states('sensor.shelly_phase_a_power_smoothed') | float(0) }}"
+        soc_1: "{{ states('sensor.solarflow_800_pro_electric_level') | float(50) }}"
+        soc_2: "{{ states('sensor.solarflow_800_pro_2_electric_level') | float(50) }}"
         soc: >-
           {{ ((states('sensor.solarflow_800_pro_electric_level') | float(50)) +
               (states('sensor.solarflow_800_pro_2_electric_level') | float(50))) / 2 }}
@@ -137,18 +136,23 @@
           {% set t = now().strftime('%H:%M:%S') %}
           {{ (t >= '22:00:00') or (t < '08:00:00') }}
 
-        # Check tomorrow's PV forecast (at night, 'today' sensor shows next day's forecast)
-        # Only evaluated at 22:00+ for accuracy
-        pv_forecast_tomorrow: "{{ states('sensor.solar_production_estimate_today_total') | float(0) }}"
-        low_pv_tomorrow: "{{ pv_forecast_tomorrow < 10 }}"
+        # Preserve each battery for the coming day using its explicit tomorrow forecast.
+        pv_forecast_tomorrow: "{{ states('sensor.solar_production_estimate_tomorrow_total') | float(0) }}"
+        pv_forecast_available: >-
+          {{ states('sensor.solar_production_estimate_tomorrow_total')
+             not in ['unknown','unavailable','none',''] }}
+        low_pv_tomorrow: "{{ pv_forecast_available and pv_forecast_tomorrow < 10 }}"
 
-        # Idle if:
-        # 1. Auto 12 is actively charging (last_charge > 0) – avoid AC port conflict
-        # 2. OR night window AND low PV forecast AND SoC at floor – preserve battery for low-PV day
-        should_idle: >-
-          {{ (last_charge > 0) or (night_charge_window and low_pv_tomorrow and soc <= evening_soc_min) }}
-
-
+        # Auto 12 charging requires both batteries to idle. Low-PV protection is
+        # handled per battery below, so one battery can stop while the other runs.
+        should_idle: "{{ last_charge > 0 }}"
+        low_pv_night_protection: "{{ night_charge_window and low_pv_tomorrow }}"
+        battery_1_floor_reached: >-
+          {{ soc_1 <= soc_discharge_min
+             or (low_pv_night_protection and soc_1 <= evening_soc_min) }}
+        battery_2_floor_reached: >-
+          {{ soc_2 <= soc_discharge_min
+             or (low_pv_night_protection and soc_2 <= evening_soc_min) }}
 
         # --- tuning (total across both devices; each device gets value / 2) ---
         step_size: 100
@@ -168,47 +172,35 @@
         # -------------------------
         # IMPORT → DISCHARGE target
         # -------------------------
-        # After 08:00 (high tariff): allow discharge below soc_discharge_min to minimize grid import
-        # Before 08:00 (low tariff): protect floor SoC
-        discharge_min_threshold: >-
-          {% set t = now().strftime('%H:%M:%S') %}
-          {% if t >= '08:00:00' and t < '22:00:00' %}
-            5
-          {% else %}
-            {{ soc_discharge_min }}
-          {% endif %}
+        # Compute the grid-zero discharge target independently of pack SoC.
+        # Per-pack floors are applied to each output limit below.
         target_discharge: >-
           {% set ld = last_discharge | int %}
           {% set g = grid | float %}
-          {% set soc_min = discharge_min_threshold | int %}
           {% set step = step_size | int %}
           {% set maxd = max_discharge | int %}
-          {% if soc <= soc_min %}
-            0
-          {% else %}
-            {% set load_est = g + ld %}
-            {% set ideal = load_est - 50 %}
-            {% if ideal < 0 %}{% set ideal = 0 %}{% endif %}
-            {% if ideal > maxd %}{% set ideal = maxd %}{% endif %}
-            {% if g > 800 %}
-              {{ ideal }}
-            {% elif g > 400 %}
-              {% set max_jump = step * 3 %}
-              {% if ideal > ld + max_jump %}
-                {{ ld + max_jump }}
-              {% elif ideal < ld - max_jump %}
-                {{ ld - max_jump }}
-              {% else %}
-                {{ ideal }}
-              {% endif %}
+          {% set load_est = g + ld %}
+          {% set ideal = load_est - 50 %}
+          {% if ideal < 0 %}{% set ideal = 0 %}{% endif %}
+          {% if ideal > maxd %}{% set ideal = maxd %}{% endif %}
+          {% if g > 800 %}
+            {{ ideal }}
+          {% elif g > 400 %}
+            {% set max_jump = step * 3 %}
+            {% if ideal > ld + max_jump %}
+              {{ ld + max_jump }}
+            {% elif ideal < ld - max_jump %}
+              {{ ld - max_jump }}
             {% else %}
-              {% if ideal > ld + step %}
-                {{ ld + step }}
-              {% elif ideal < ld - step %}
-                {{ ld - step }}
-              {% else %}
-                {{ ideal }}
-              {% endif %}
+              {{ ideal }}
+            {% endif %}
+          {% else %}
+            {% if ideal > ld + step %}
+              {{ ld + step }}
+            {% elif ideal < ld - step %}
+              {{ ld - step }}
+            {% else %}
+              {{ ideal }}
             {% endif %}
           {% endif %}
 
@@ -280,6 +272,26 @@
             {{ ld }}
           {% endif %}
 
+        battery_1_output_now: "{{ states('number.solarflow_800_pro_output_limit') | float(0) | int }}"
+        battery_2_output_now: "{{ states('number.solarflow_800_pro_2_output_limit') | float(0) | int }}"
+        battery_1_discharge_target: >-
+          {% if battery_1_floor_reached %}
+            0
+          {% else %}
+            {{ (final_discharge / 2) | round(0) | int }}
+          {% endif %}
+        battery_2_discharge_target: >-
+          {% if battery_2_floor_reached %}
+            0
+          {% else %}
+            {{ (final_discharge / 2) | round(0) | int }}
+          {% endif %}
+        discharge_cutoff_needs_apply: >-
+          {{ (battery_1_floor_reached and battery_1_output_now > 0)
+             or (battery_2_floor_reached and battery_2_output_now > 0) }}
+        target_discharge_total: >-
+          {{ (battery_1_discharge_target | int) + (battery_2_discharge_target | int) }}
+
         final_charge: >-
           {% set g = grid | float %}
           {% set lc = last_charge | int %}
@@ -317,8 +329,8 @@
 
     - choose:
         # ============================================================
-        # RULE: Idle when auto 12 charges (22:00–08:00 planned)
-        #       or when SoC low after 22:00 (planned OFF)
+        # RULE: Idle both batteries when auto 12 is charging. Low-PV SoC
+        #       protection is applied independently to each battery output.
         # ============================================================
         - conditions:
             - condition: template
@@ -355,18 +367,20 @@
                     message: >
                       {% if last_charge > 0 %}
                       "STEP100 IDLE: Auto 12 charging ({{ last_charge }}W), grid={{ grid }}W, trigger={{ trigger.id }}"
-                      {% else %}
-                      "STEP100 NIGHT-IDLE: SoC={{ soc }}% <= evening_min={{ evening_soc_min }}%, pv_forecast={{ pv_forecast_tomorrow }}kWh (low=<10), grid={{ grid }}W, trigger={{ trigger.id }}"
                       {% endif %}
 
-            - stop: "Idle (Auto 12 charging or low SoC + low PV forecast)"
+            - stop: "Idle while auto 12 is charging"
 
-        # BRANCH A: DISCHARGE
+        # BRANCH A: DISCHARGE (each battery has its own SoC cutoff)
         - conditions:
             - condition: template
-              value_template: "{{ final_discharge | int > 0 }}"
+              value_template: >-
+                {{ target_discharge_total | int > 0 or discharge_cutoff_needs_apply }}
             - condition: template
-              value_template: "{{ delta_dis | int >= min_delta or (last_discharge | int) == 0 }}"
+              value_template: >-
+                {{ delta_dis | int >= min_delta
+                   or (last_discharge | int) == 0
+                   or discharge_cutoff_needs_apply }}
           sequence:
             - service: select.select_option
               target:
@@ -379,11 +393,16 @@
 
             - service: number.set_value
               target:
-                entity_id:
-                  - number.solarflow_800_pro_output_limit
-                  - number.solarflow_800_pro_2_output_limit
+                entity_id: number.solarflow_800_pro_output_limit
               data:
-                value: "{{ (final_discharge / 2) | round(0) | int }}"
+                value: "{{ battery_1_discharge_target | int }}"
+              continue_on_error: true
+
+            - service: number.set_value
+              target:
+                entity_id: number.solarflow_800_pro_2_output_limit
+              data:
+                value: "{{ battery_2_discharge_target | int }}"
               continue_on_error: true
 
             - service: number.set_value
@@ -399,7 +418,7 @@
               target:
                 entity_id: input_number.solarflow_discharge_last
               data:
-                value: "{{ final_discharge | int }}"
+                value: "{{ target_discharge_total | int }}"
 
             - service: input_number.set_value
               target:
@@ -412,7 +431,7 @@
                 level: info
                 logger: solarflow_grid_control
                 message: >
-                  "STEP100 DISCH: grid={{ grid }}W, soc={{ soc }}%, new={{ final_discharge }}W ({{ (final_discharge/2)|int }}W/device),
+                  "STEP100 DISCH: grid={{ grid }}W, soc1={{ soc_1 }}%, soc2={{ soc_2 }}%, new={{ target_discharge_total }}W (batt1={{ battery_1_discharge_target }}W, batt2={{ battery_2_discharge_target }}W),
                   last={{ last_discharge }}W, delta={{ delta_dis }}W, trigger={{ trigger.id }}"
 
         # BRANCH B: CHARGE

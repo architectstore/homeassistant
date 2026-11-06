@@ -37,6 +37,12 @@
         - binary_sensor.grid_high_alert_ev
         - binary_sensor.ev_charger_connectivity
         - binary_sensor.ev_charger_problem
+        - input_boolean.ev_charge_enable
+
+    # Avalia o início do período noturno mesmo se nenhum sensor mudar
+    - platform: time
+      at: "22:00:00"
+      id: 'night_on'
 
     # Parada horário
     - platform: time

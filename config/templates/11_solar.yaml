@@ -21,6 +21,27 @@
         }}
 
 - sensor:
+    - name: "Solar production estimate tomorrow (total)"
+      unique_id: solar_production_estimate_tomorrow_total
+      unit_of_measurement: "kWh"
+      device_class: energy
+      state_class: measurement
+      state: >-
+        {{
+          states('sensor.energy_production_tomorrow') | float(0) +
+          states('sensor.energy_production_tomorrow_2') | float(0) +
+          states('sensor.energy_production_tomorrow_3') | float(0) +
+          states('sensor.energy_production_tomorrow_4') | float(0)
+        }}
+      availability: >-
+        {{
+          states('sensor.energy_production_tomorrow') | is_number and
+          states('sensor.energy_production_tomorrow_2') | is_number and
+          states('sensor.energy_production_tomorrow_3') | is_number and
+          states('sensor.energy_production_tomorrow_4') | is_number
+        }}
+
+- sensor:
     - name: "PV Power Total Aggregated"
       unique_id: pv_power_total_aggregated
       unit_of_measurement: "W"

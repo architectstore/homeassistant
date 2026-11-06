@@ -12,13 +12,6 @@
       for: "00:20:00"
       id: reached_full
 
-    # Deep event (<= ~5 for 10 min)
-    - platform: numeric_state
-      entity_id: sensor.zendure_battery_soc
-      below: 5.1
-      for: "00:10:00"
-      id: reached_deep
-
     # Recompute regularly so it applies even without crossings
     - platform: time_pattern
       hours: "/1"
@@ -37,10 +30,6 @@
     full_interval_days: 15
     cap_normal: 90
     cap_full: 100
-
-    discharge_interval_days: 20
-    discharge_min_normal: 20
-    discharge_min_deep: 5
 
     # --- DATE PARSING ---
     today0: "{{ now().replace(hour=0, minute=0, second=0, microsecond=0) }}"
@@ -61,22 +50,6 @@
     allow_full: "{{ days_since_full >= (full_interval_days | int) }}"
     target_charge_cap: "{{ cap_full if allow_full else cap_normal }}"
 
-    last_deep_str: "{{ states('input_text.zendure_last_deep_discharge_date') }}"
-    last_deep_dt: >-
-      {% if last_deep_str is match('^\\d{4}-\\d{2}-\\d{2}$') %}
-        {{ as_datetime(last_deep_str ~ ' 00:00:00') }}
-      {% else %}
-        {{ none }}
-      {% endif %}
-    days_since_deep: >-
-      {% if last_deep_dt is not none %}
-        {{ (today0.date() - last_deep_dt.date()).days }}
-      {% else %}
-        9999
-      {% endif %}
-    allow_deep: "{{ days_since_deep >= (discharge_interval_days | int) }}"
-    target_discharge_min: "{{ discharge_min_deep if allow_deep else discharge_min_normal }}"
-
   action:
     - choose:
         - conditions: "{{ trigger.id == 'reached_full' }}"
@@ -87,22 +60,9 @@
               data:
                 value: "{{ now().strftime('%Y-%m-%d') }}"
 
-        - conditions: "{{ trigger.id == 'reached_deep' }}"
-          sequence:
-            - service: input_text.set_value
-              target:
-                entity_id: input_text.zendure_last_deep_discharge_date
-              data:
-                value: "{{ now().strftime('%Y-%m-%d') }}"
-
     - service: input_number.set_value
       target:
         entity_id: input_number.solarflow_soc_charge_max
       data:
         value: "{{ target_charge_cap }}"
 
-    - service: input_number.set_value
-      target:
-        entity_id: input_number.solarflow_soc_discharge_min
-      data:
-        value: "{{ target_discharge_min }}"

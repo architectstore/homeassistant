@@ -1,5 +1,5 @@
 # ============================================================================
-# NIGHT: Charge SolarFlow from grid when today's PV forecast is low
+# NIGHT: Charge SolarFlow from grid when the forecast for the charge day is low
 # Plan anytime (sets helper), act only 00:30–07:00 (touches inverter)
 # Helper used by automation 11: input_boolean.solarflow_night_charge_planned
 #
@@ -116,18 +116,25 @@
 
         low_pv_soc_limit: "{{ states('input_number.solarflow_low_pv_soc_limit') | float(45) }}"
 
-        # Use today's forecast (because after midnight it's already 'today')
-        pv_today_kwh: "{{ states('sensor.solar_production_estimate_today_total') | float(0) }}"
+        # The next charge window is today from 00:30–07:00; otherwise it is tomorrow.
+        pv_charge_day_kwh: >-
+          {% if now().hour < 7 %}
+            {{ states('sensor.solar_production_estimate_today_total') | float(0) }}
+          {% else %}
+            {{ states('sensor.solar_production_estimate_tomorrow_total') | float(0) }}
+          {% endif %}
         pv_threshold_kwh: "{{ states('input_number.solarflow_pv_threshold_kwh') | float(5) }}"
 
         pv_forecast_available: >-
-          {{ states('sensor.solar_production_estimate_today_total')
+          {% set forecast_entity = 'sensor.solar_production_estimate_today_total'
+             if now().hour < 7 else 'sensor.solar_production_estimate_tomorrow_total' %}
+          {{ states(forecast_entity)
              not in ['unknown','unavailable','none',''] }}
 
         # Decision: should we charge tonight due to low PV forecast?
         should_charge_low_pv: >-
           {{ pv_forecast_available
-             and (pv_today_kwh < pv_threshold_kwh)
+             and (pv_charge_day_kwh < pv_threshold_kwh)
              and soc < 70
              and (soc < low_pv_soc_limit or last_charge > 0) }}
 
@@ -256,7 +263,7 @@
                 message: >
                   🌙 CHARGE (LOW PV): target={{ target_charge }}W (desired={{ safe_charge_power }}W,
                   headroom={{ grid_headroom }}W) | soc={{ soc }}%
-                  | pv_today={{ pv_today_kwh }}kWh | threshold={{ pv_threshold_kwh }}kWh
+                  | pv_charge_day={{ pv_charge_day_kwh }}kWh | threshold={{ pv_threshold_kwh }}kWh
                   | planned={{ is_state('input_boolean.solarflow_night_charge_planned','on') }}
 
       default:

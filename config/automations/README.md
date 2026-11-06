@@ -16,7 +16,7 @@ are managed as a fleet: all power limits are tracked in **total watts** and spli
 | `01_garage_water.yaml` | Active | Notifies immediately on a garage water-leak detection. |
 | `11_solarflow_day-grid-zero.yaml` | **Active** | Core grid-zero controller. Runs 07:00–23:00; discharges on import, charges on export. Reserves export headroom for the EV before charging the battery. |
 | `12_solarflow_night-charge-weather.yaml` | **Active** | Plans a night grid-charge anytime; forces idle 23:00–00:30 (handoff from auto 11); charges 00:30–07:00 when tomorrow's PV forecast is low. Power is headroom-capped to keep import ≤ 4100 W and ramps gradually toward that target. |
-| `14_solaflow_health.yaml` | **Active** | Battery health management: adjusts `soc_charge_max` and `soc_discharge_min` based on full/deep cycle intervals. |
+| `14_solaflow_health.yaml` | **Active** | Battery health management: adjusts `soc_charge_max` based on full-cycle interval. |
 | `15_solarflow_grid-breaker-guard.yaml` | **Active** | Emergency safety: cuts SolarFlow AC input if grid import sustains above 4400 W for 1 minute. |
 | `19_solarflow_debug.yaml` | **Active** | Logs discharge/charge limit changes at info level. |
 | `20_ev-charge.yaml` | **Active** | Master enable-off stop, plus night-schedule EV charging 22:00–08:00 gated on grid headroom. |
@@ -86,18 +86,14 @@ edges (07:00, 08:00, 22:00), HA start.
 
 **Decision flow (in priority order)**:
 
-1. **Idle rule (`should_idle`)** — idle if `input_number.solarflow_charge_last`
-   is already > 0 (auto 12 is charging), OR if the internal `night_charge_window`
-   flag (22:00–08:00) is true AND PV forecast < 10 kWh AND SoC ≤
-   `solarflow_evening_soc_min` (45%). In practice the second branch can only
-   ever be true in the narrow overlap where the automation is still inside its
-   07:00–23:00 condition window (i.e. the 22:00–23:00 hour), since the
-   automation does not run at all outside that window.
+1. **Idle and SoC protection** — both batteries idle when auto 12 is charging.
+   During the 22:00–23:00 low-PV window (forecast < 10 kWh), each battery's
+   discharge output is independently set to zero when its own SoC reaches
+   `solarflow_evening_soc_min` (45%). The configured
+   `solarflow_soc_discharge_min` floor is also enforced per battery at all times.
 
-2. **Branch A — Discharge**: grid > 120 W AND SoC above the effective floor
-   (5% during 08:00–22:00 "high tariff"; `solarflow_soc_discharge_min` — 25%
-   default — otherwise) → stepped output up to 1600 W total, each device gets
-   `final_discharge / 2`.
+2. **Branch A — Discharge**: grid > 120 W → stepped output up to 1600 W total,
+   split across batteries that remain above their individual SoC floors.
 
 3. **Branch B — Solar charge**: grid < ‑80 W AND sun is up (sunrise+30 min →
    sunset‑30 min) → stepped input up to 2000 W total, capped by `charge_cap`
@@ -131,8 +127,9 @@ today's/tomorrow's PV forecast is low.
 
 **Planning phase** (runs any time, every 1 min + on SoC change + at 00:20 to
 refresh just before the acting window opens):
-- Reads `sensor.solar_production_estimate_today_total` (sum of 4 PV forecast
-  sensors, see `templates/11_solar.yaml`)
+- Reads the forecast for the day being charged: today's total during 00:30–07:00,
+  and tomorrow's total at other times (both aggregate four forecast sensors in
+  `templates/11_solar.yaml`)
 - If forecast < `solarflow_pv_threshold_kwh` (5 kWh) AND avg SoC < 70% AND
   (SoC < `low_pv_soc_limit` (40%) OR already charging) →
   `input_boolean.solarflow_night_charge_planned = ON`
@@ -172,15 +169,12 @@ per_device_limit  = target_charge / 2
 
 ### 14 — Battery Health (active)
 
-Adjusts `solarflow_soc_charge_max` and `solarflow_soc_discharge_min` based on:
+Adjusts `solarflow_soc_charge_max` based on:
 - Full cycle interval (`full_interval_days = 15`): allows 100% charge every 15
   days (triggered by SoC ≥ 98.9% for 20 min), otherwise caps at 90%
-- Deep cycle interval (`discharge_interval_days = 20`): allows a 5% discharge
-  floor every 20 days (triggered by SoC ≤ 5.1% for 10 min), otherwise 20%
 
-Recomputed hourly and at 00:05 daily in addition to the trigger events.
-Timestamps stored in `input_text.zendure_last_full_date` and
-`input_text.zendure_last_deep_discharge_date`. Note this automation reads
+Recomputed hourly and at 00:05 daily in addition to the full-cycle trigger.
+Timestamp stored in `input_text.zendure_last_full_date`. Note this automation reads
 `sensor.zendure_battery_soc` (single-device template sensor), not the
 two-device average used elsewhere.
 
@@ -212,7 +206,8 @@ This file has **two** automations:
 1. `ev_charge_stop_on_enable_off` — if `ev_charge_enable` is switched off while
    the charger is on, stops it immediately and notifies.
 2. `ev_charger_night_schedule` — the actual night schedule:
-   - **Start** (22:00–08:00): requires `ev_charge_enable = on`,
+   - **Start** (22:00–08:00): checks at 22:00 and when a relevant grid or
+     charger state changes, including when `ev_charge_enable` turns on. It requires `ev_charge_enable = on`,
      `binary_sensor.grid_low_safe_for_ev = on` for 5 s (grid draw < 2000 W,
      from `templates/13_grid_safety.yaml`), charger currently off, EV
      connected, no charger fault. Sets current to 10 A, waits 5 s, then turns
@@ -239,7 +234,7 @@ This file has **two** automations:
 |---|---|---|
 | `input_number.solarflow_discharge_last` | 0 (max 1600) | Total discharge limit last set (both devices) |
 | `input_number.solarflow_charge_last` | 0 (max 2000) | Total charge limit last set (both devices) |
-| `input_number.solarflow_soc_discharge_min` | 10 | Absolute SoC floor for discharge (managed by auto 14, default overridden by it) |
+| `input_number.solarflow_soc_discharge_min` | 25 | Configurable minimum SoC floor for discharge, set directly in the helper |
 | `input_number.solarflow_evening_soc_min` | 45 | SoC floor for the 22:00–23:00 idle decision in auto 11 |
 | `input_number.solarflow_soc_charge_max` | 100 | Max SoC for solar charge absorption (managed by auto 14) |
 | `input_number.solarflow_pv_threshold_kwh` | 5 | PV forecast threshold to trigger night charge |
