@@ -78,7 +78,7 @@
   action:
     - variables:
         # ---------------- tuning ----------------
-        grid_ceiling: 4100      # W - kept under breaker guard (4400) and EV stop (4500)
+        grid_ceiling: 4100      # W - kept under breaker guard (4400) and EV stop (4900 x 15 min)
         max_total_charge: 2000
         max_per_device: 1000
         ramp_up_step: 500       # W per ~1 min tick

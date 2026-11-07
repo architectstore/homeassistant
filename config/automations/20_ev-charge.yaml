@@ -26,7 +26,7 @@
 
 - id: 'ev_charger_night_schedule'
   alias: "EV Charger - Night Schedule (Safe Grid)"
-  description: "Liga 22h-8h só se rede <2000W, para >4500W ou horário"
+  description: "Liga 22h-8h só se rede <2000W; para se rede >4900W durante 15 min (a qualquer hora) ou às 8h"
   mode: restart
 
   trigger:
@@ -48,6 +48,13 @@
     - platform: time
       at: "08:00:00"
       id: 'morning_off'
+
+    # Failsafe de sobrecarga: rede >4900W durante 15 min (qualquer hora, qualquer causa)
+    - platform: state
+      entity_id: binary_sensor.grid_high_alert_ev
+      to: "on"
+      for: "00:15:00"
+      id: 'overload'
 
   action:
     - choose:
@@ -94,13 +101,13 @@
                   Corrente: 13 A |
                   Hora: {{ now().strftime('%H:%M') }}
 
-        # 2. STOP EMERGÊNCIA: sobrecarga rede
+        # 2. STOP EMERGÊNCIA: sobrecarga rede (ignora o toggle enable)
         - conditions:
             - condition: state
               entity_id: binary_sensor.grid_high_alert_ev
               state: "on"
               for:
-                seconds: 120
+                minutes: 15
             - condition: state
               entity_id: switch.ev_charger
               state: "on"
@@ -113,7 +120,7 @@
               data:
                 title: "🚨 EV: PARADO SOBRECONSUMO!"
                 message: >-
-                  Fase A: {{ states('sensor.shelly_phase_a_power_smoothed') }} W (>4500W) |
+                  Fase A: {{ states('sensor.shelly_phase_a_power_smoothed') }} W (>4900W durante 15 min) |
                   Hora: {{ now().strftime('%H:%M') }}
 
         # 3. STOP HORÁRIO 08:00

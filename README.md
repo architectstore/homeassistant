@@ -49,15 +49,15 @@ Summary of the active pieces:
 
 Both EV automations respect a master `input_boolean.ev_charge_enable` toggle;
 turning it off immediately stops an in-progress charge
-(`20_ev-charge.yaml`, first automation in the file). The night overload
+(`20_ev-charge.yaml`, first automation in the file). The overload
 emergency stop applies regardless of the toggle.
 
 - **`20_ev-charge.yaml` — night schedule**: between 22:00 and 08:00, starts
   charging (13 A) only while `binary_sensor.grid_low_safe_for_ev` (grid draw
   < 2000 W, from `config/templates/13_grid_safety.yaml`) has been on for 5 s
   and the EV is connected with no charger fault. It stops immediately if
-  `binary_sensor.grid_high_alert_ev` (grid draw > 4500 W) holds for 2 minutes,
-  or unconditionally at 08:00.
+  `binary_sensor.grid_high_alert_ev` (grid draw > 4900 W) holds for 15 minutes
+  (any time of day), or unconditionally at 08:00.
 - **`21_ev-charge_sun.yaml` — solar-surplus charging**: starts when export
   reaches ≥ 2500 W for 1 minute; stops when import reaches ≥ 500 W for 5
   minutes, but only while inside the 08:00–22:00 window (outside it, the
@@ -111,7 +111,7 @@ and `number.ev_charger_charging_current`.
   combines Solax/microinverter/SolarFlow instantaneous power into
   `sensor.pv_power_total_aggregated`.
 - **`templates/13_grid_safety.yaml`** — `binary_sensor.grid_low_safe_for_ev`
-  (< 2000 W) and `binary_sensor.grid_high_alert_ev` (> 4500 W), gating the EV
+  (< 2000 W) and `binary_sensor.grid_high_alert_ev` (> 4900 W), gating the EV
   night-schedule automation.
 - **`templates/15_solarflow_plan.yaml`** — `sensor.solarflow_night_target_soc`
   and `binary_sensor.solarflow_low_pv_day`, the forecast-based plan used by
