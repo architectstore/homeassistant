@@ -74,32 +74,26 @@ of the night-related variables computed inside its logic. Extended from the
 old 22:00 cutoff so the 22:00–08:00 25%-floor discharge branch (below) is
 actually reachable for the 22:00–23:00 hour instead of being dead code.
 
-**Triggers**: grid > 75 W for 5 s, grid < ‑100 W for 10 s, every 1 min, time
-edges (07:00, 08:00, 22:00), HA start.
+**Control law (rewritten)**: one signed battery command `p` (+ discharge,
+− charge) is moved each cycle by `gain × (grid − target_import)` from the
+previous command (damped integrator), using the **raw** `sensor.shelly_phase_a_power`
+(not the smoothed one — the filter's 10 s lag was feeding stale error back
+into the loop and causing the oscillation).
 
-**Tuning parameters (total across both devices)**:
-- `step_size`: 100 W (50 W per device)
-- `max_discharge`: 1600 W
-- `max_charge`: 2000 W (solar export absorption only)
-- `min_delta`: 40 W (hysteresis before applying a new limit)
-- `ev_reserve_w`: 2500 W — see EV priority below
-
-**Decision flow (in priority order)**:
-
-1. **Idle and SoC protection** — both batteries idle when auto 12 is charging.
-   During the 22:00–23:00 low-PV window (forecast < 10 kWh), each battery's
-   discharge output is independently set to zero when its own SoC reaches
-   `solarflow_evening_soc_min` (45%). The configured
-   `solarflow_soc_discharge_min` floor is also enforced per battery at all times.
-
-2. **Branch A — Discharge**: grid > 120 W → stepped output up to 1600 W total,
-   split across batteries that remain above their individual SoC floors.
-
-3. **Branch B — Solar charge**: grid < ‑80 W AND sun is up (sunrise+30 min →
-   sunset‑30 min) → stepped input up to 2000 W total, capped by `charge_cap`
-   (see EV priority below).
-
-4. **Default — Idle**: both targets zero and state needs resetting.
+- **Triggers**: every raw Shelly update, a 10 s heartbeat, time edges, HA start.
+  No `for:` delays.
+- **Settle gate**: acts only ≥ `settle_s` (6 s) after the previous command, so
+  the inverter's response is visible before correcting again.
+- **Deadband**: |grid − 20 W| < 40 W → hold. `gain` 0.8, `max_step` 800 W.
+- **Direction changes pass through 0** for one cycle; export while discharging
+  only reduces the discharge, it never flips straight into charging.
+- **SoC floors**: per battery; a floored battery's share goes to the other.
+  Low-PV night floor (45 %) still applies 22:00–08:00.
+- **Charge**: only when sun elevation > 3° and SoC < `soc_charge_max`,
+  capped by the EV reservation.
+- **Self-repair**: if device limits differ from the commanded values by > 30 W
+  the limits are re-written.
+- Tuning knobs are the first variables in the action block.
 
 **EV export priority**: while `binary_sensor.ev_charger_connectivity` and
 `input_boolean.ev_charge_enable` are both on and `switch.ev_charger` is off
@@ -119,51 +113,34 @@ window closed stays in effect until auto 12 (idle/charging window) or auto 15
 
 ---
 
-### 12 — Night Charge Weather (active)
+### 12 — Low-tariff night charge (active)
 
-**Purpose**: Idle the batteries during the 23:00–00:30 handoff gap, then
-charge both batteries from the grid during low-tariff hours when
-today's/tomorrow's PV forecast is low.
+**Purpose**: on a low-PV day, fill each battery during the low tariff
+(22:00–08:00) to a forecast-based target so the high-tariff day is served by
+the batteries.
 
-**Planning phase** (runs any time, every 1 min + on SoC change + at 00:20 to
-refresh just before the acting window opens):
-- Reads the forecast for the day being charged: today's total during 00:30–07:00,
-  and tomorrow's total at other times (both aggregate four forecast sensors in
-  `templates/11_solar.yaml`)
-- If forecast < `solarflow_pv_threshold_kwh` (5 kWh) AND avg SoC < 70% AND
-  (SoC < `low_pv_soc_limit` (40%) OR already charging) →
-  `input_boolean.solarflow_night_charge_planned = ON`
-- This flag is also read by auto 11's (currently unreachable — see above)
-  night-idle branch.
+**Shared signals** (`templates/15_solarflow_plan.yaml`):
+- `sensor.solarflow_night_target_soc` = floor + (daily consumption − 60 % of the
+  PV forecast) / 7.68 kWh, clamped to floor..`soc_charge_max`. Forecast = today's
+  total before 12:00, tomorrow's after.
+- `binary_sensor.solarflow_low_pv_day` = target > floor + 10 %.
+- `input_number.solarflow_daily_consumption_kwh` (default 5; **set ≈12 for
+  Dec–Feb heating season**).
 
-**Idle window (acts on the inverter)**: **23:00–00:30**. Explicit handoff
-enforcement — zeroes both charge and discharge helpers/limits if either was
-left nonzero by auto 11. Backed by a hard-edge trigger at 23:00 plus the
-1-min periodic tick.
+**Ownership with auto 11**: 12 owns 23:00–07:00 always, and 22:00–23:00 /
+07:00–08:00 only when `low_pv_day` is on (11 stands down in those hours).
+Otherwise 11 owns 07:00–23:00. On a low-PV day the batteries are therefore
+not discharged during cheap hours.
 
-**Charge window (acts on the inverter)**: **00:30–07:00** only. Outside
-23:00–07:00 the automation only updates the planning flag; it explicitly
-`stop`s before touching any inverter entity.
+**Behaviour**: idle until 00:30; then each battery below target (start
+hysteresis 8 %, latched by `solarflow_night_charge_planned`) is charged,
+split per battery, max 2000 W total / 1000 W per device. Charge power =
+`last_charge + (4100 − grid)` capped, ramp +500 / −1000 W per tick (the grid
+reading already contains the charge, so headroom is added to it). At the
+07:00 / 08:00 hand-over, limits and helpers are zeroed.
 
-**Dynamic power (evaluated every ~1-min cycle, inside 00:30–07:00)**:
-```
-grid_headroom     = max(0, 4100 − current_grid_import)
-safe_charge_power = min(2000, grid_headroom)          # instantaneous desired target
-target_charge     = ramp(safe_charge_power, previous) # +200 W/tick up, -600 W/tick down,
-                                                        # immediate if starting from 0
-per_device_limit  = target_charge / 2
-```
-- Skips charging if `safe_charge_power < 200 W`
-- Reacts fast: a state-trigger on the grid sensor (5 s debounce) plus a 1-min
-  periodic tick, not just the 30-min planning cycle
-- Ramps gradually toward the headroom target rather than jumping straight to
-  it (faster ramp-down than ramp-up, since backing off is the safety-relevant
-  direction); starts at full target immediately if coming from a stop (0 W)
-- Accounts for EV charging automatically (EV import reduces headroom →
-  SolarFlow charge backs off)
-- Stores `target_charge` (total, the ramped value) in `solarflow_charge_last`
-  so auto 11's math stays consistent
-- At 07:00 the plan flag is cleared (`solarflow_night_charge_planned = OFF`)
+Obsolete helpers: `solarflow_pv_threshold_kwh`, `solarflow_low_pv_soc_limit`,
+`solarflow_evening_soc_min` are no longer used.
 
 ---
 

@@ -9,7 +9,7 @@
     Emergency stop: if grid import sustains above 4400 W for 1 full minute,
     immediately cut all SolarFlow AC charging on both devices to protect the
     utility breaker. Does not touch discharge — SolarFlow may already be helping
-    reduce import. Automation 12 will resume charging on its next 30-min cycle
+    reduce import. Automation 12 will resume charging on its next ~1-min cycle
     if conditions allow (headroom check will prevent re-overload).
   mode: single
 

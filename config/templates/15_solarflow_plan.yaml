@@ -1,0 +1,39 @@
+# Shared planning signals for automations 11 (day grid-zero) and 12 (night plan).
+#
+# Forecast used = the day the batteries have to cover:
+#   00:00-12:00 -> today's total, 12:00-24:00 -> tomorrow's total.
+# Energy needed from the batteries (kWh) = daily consumption in HIGH-tariff hours
+#   minus the part of the PV forecast that is actually usable (60 %).
+# Target SoC = discharge floor + need / 7.68 kWh (2 x 3.84), clamped to the
+#   floor..charge-max range (charge-max is managed by automation 14).
+- sensor:
+    - name: "SolarFlow night target SoC"
+      unique_id: solarflow_night_target_soc
+      unit_of_measurement: "%"
+      state_class: measurement
+      icon: mdi:battery-charging-high
+      availability: >-
+        {{ is_number(states('sensor.solar_production_estimate_today_total'
+                            if now().hour < 12 else
+                            'sensor.solar_production_estimate_tomorrow_total'))
+           and is_number(states('input_number.solarflow_daily_consumption_kwh')) }}
+      state: >-
+        {% set fc = states('sensor.solar_production_estimate_today_total'
+                           if now().hour < 12 else
+                           'sensor.solar_production_estimate_tomorrow_total') | float(0) %}
+        {% set use = states('input_number.solarflow_daily_consumption_kwh') | float(5) %}
+        {% set floor = states('input_number.solarflow_soc_discharge_min') | float(25) %}
+        {% set cap = states('input_number.solarflow_soc_charge_max') | float(90) %}
+        {% set need = use - 0.6 * fc %}
+        {% set target = floor + (need / 7.68) * 100 %}
+        {{ [[target, floor] | max, cap] | min | round(0) }}
+
+- binary_sensor:
+    - name: "SolarFlow low PV day"
+      unique_id: solarflow_low_pv_day
+      icon: mdi:weather-cloudy
+      availability: "{{ has_value('sensor.solarflow_night_target_soc') }}"
+      # On when the forecast leaves > ~10 % SoC (~0.8 kWh) to be bought at night tariff
+      state: >-
+        {{ states('sensor.solarflow_night_target_soc') | float(0)
+           > states('input_number.solarflow_soc_discharge_min') | float(25) + 10 }}

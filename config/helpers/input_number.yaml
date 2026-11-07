@@ -88,4 +88,12 @@ solarflow_evening_soc_min:
   initial: 45
   icon: mdi:battery-lock
 
-
+solarflow_daily_consumption_kwh:
+  name: "12 Daily consumption in high-tariff hours"
+  min: 0
+  max: 20
+  step: 0.5
+  unit_of_measurement: "kWh"
+  mode: slider
+  initial: 5   # ~5 kWh without heating, ~12 kWh Dec-Feb with heating
+  icon: mdi:home-lightning-bolt
