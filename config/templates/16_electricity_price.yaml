@@ -1,0 +1,20 @@
+# Electricity price for the Energy dashboard (cost tracking)
+# Low tariff 22:00-08:00, high tariff 08:00-22:00.
+# Re-evaluated at both switch times, every 5 minutes (so it never stays
+# unknown after a reload), and at Home Assistant start.
+- trigger:
+    - trigger: homeassistant
+      event: start
+    - trigger: time
+      at:
+        - "08:00:00"
+        - "22:00:00"
+    - trigger: time_pattern
+      minutes: "/5"
+  sensor:
+    - name: "Electricity price"
+      unique_id: electricity_price_kwh
+      unit_of_measurement: "EUR/kWh"
+      state_class: measurement
+      state: >-
+        {{ 0.115116 if now().hour >= 22 or now().hour < 8 else 0.188256 }}
