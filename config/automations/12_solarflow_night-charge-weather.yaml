@@ -68,6 +68,10 @@
       id: ha_startup
 
   condition:
+    # Manual emergency charge (automation 13) owns the inverters while on
+    - condition: state
+      entity_id: input_boolean.solarflow_emergency_charge
+      state: "off"
     - condition: template
       value_template: >
         {{ (has_value('sensor.solarflow_800_pro_electric_level')

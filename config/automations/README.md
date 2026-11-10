@@ -16,6 +16,7 @@ are managed as a fleet: all power limits are tracked in **total watts** and spli
 | `01_garage_water.yaml` | Active | Notifies immediately on a garage water-leak detection. |
 | `11_solarflow_day-grid-zero.yaml` | **Active** | Core grid-zero controller. Runs 07:00–23:00; discharges on import, charges on export. Reserves export headroom for the EV before charging the battery. |
 | `12_solarflow_night-charge-weather.yaml` | **Active** | Low-tariff night grid-charge on a low-PV day: idle until 00:30, then charges each battery below its forecast-based target until 08:00. Power is headroom-capped to keep import ≤ 4100 W and ramps gradually toward that target. |
+| `13_solarflow_emergency-charge.yaml` | **Active** | Manual override: while `input_boolean.solarflow_emergency_charge` is on, charges both batteries to 100 % with the same headroom/ramp logic as 12 (4100 W grid ceiling). Automations 11 and 12 are blocked while it is on. Toggle auto-switches off once all batteries are full. |
 | `14_solaflow_health.yaml` | **Active** | Battery health management: sets `soc_charge_max` (90 % normally, 100 % once every 15 days). |
 | `15_solarflow_grid-breaker-guard.yaml` | **Active** | Emergency safety: cuts SolarFlow AC input if grid import sustains above 4400 W for 1 minute. |
 | `20_ev-charge.yaml` | **Active** | Master enable-off stop, plus night-schedule EV charging 22:00–08:00 (13 A) gated on grid headroom. |

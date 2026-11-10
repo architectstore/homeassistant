@@ -11,3 +11,7 @@ gate_sentinel:
 ev_charge_enable:
   name: EV Charge Enable
   icon: mdi:car-electric
+
+solarflow_emergency_charge:
+  name: "SolarFlow emergency charge"
+  icon: mdi:battery-alert-variant

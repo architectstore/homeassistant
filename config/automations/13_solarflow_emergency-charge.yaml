@@ -1,0 +1,219 @@
+# ============================================================================
+# EMERGENCY MANUAL CHARGE (input_boolean.solarflow_emergency_charge)
+#
+# While the toggle is ON this automation OWNS the inverters: automations 11
+# (grid-zero) and 12 (night charge) are blocked by a condition on the toggle.
+# It charges each battery from the grid to 100 % using the same grid-safety
+# logic as automation 12 (headroom-capped under the 4.6 kVA contract, ramped).
+# When every available battery is full the toggle switches itself OFF and
+# control returns to 11 / 12. Turning the toggle off manually also hands back.
+# Automation 15 (breaker guard) stays active as an independent safety net.
+# ============================================================================
+
+- id: solarflow_emergency_charge
+  alias: "SolarFlow – Emergency manual charge (to 100 %, headroom-capped)"
+  description: >
+    Toggle-driven immediate grid charge of both batteries to 100 %, overriding
+    automations 11 and 12. Auto-disables the toggle once all batteries are full.
+  mode: restart
+
+  trigger:
+    - platform: time_pattern
+      minutes: "/1"
+      id: periodic
+    - platform: numeric_state
+      entity_id: sensor.shelly_phase_a_power_smoothed
+      above: 4100
+      for: "00:00:05"
+      id: overload
+    - platform: state
+      entity_id:
+        - sensor.solarflow_800_pro_electric_level
+        - sensor.solarflow_800_pro_2_electric_level
+      for: "00:00:20"
+      id: soc_change
+    - platform: state
+      entity_id: input_boolean.solarflow_emergency_charge
+      id: toggle
+    - platform: homeassistant
+      event: start
+      id: ha_startup
+
+  action:
+    - variables:
+        # ---------------- tuning (same as automation 12) ----------------
+        grid_ceiling: 4100
+        max_total_charge: 2000
+        max_per_device: 1000
+        ramp_up_step: 500
+        ramp_down_step: 1000
+        min_charge: 100
+        full_soc: 99            # % at/above which a battery counts as full
+
+        enabled: "{{ is_state('input_boolean.solarflow_emergency_charge', 'on') }}"
+        avail_1: "{{ has_value('sensor.solarflow_800_pro_electric_level') }}"
+        avail_2: "{{ has_value('sensor.solarflow_800_pro_2_electric_level') }}"
+        soc_1: "{{ states('sensor.solarflow_800_pro_electric_level') | float(100) }}"
+        soc_2: "{{ states('sensor.solarflow_800_pro_2_electric_level') | float(100) }}"
+        want_1: "{{ avail_1 and soc_1 < full_soc }}"
+        want_2: "{{ avail_2 and soc_2 < full_soc }}"
+        n_want: "{{ (1 if want_1 else 0) + (1 if want_2 else 0) }}"
+
+        last_charge: "{{ states('input_number.solarflow_charge_last') | float(0) | int }}"
+        last_discharge: "{{ states('input_number.solarflow_discharge_last') | float(0) | int }}"
+        grid: "{{ states('sensor.shelly_phase_a_power_smoothed') | float(0) }}"
+        grid_valid: "{{ has_value('sensor.shelly_phase_a_power_smoothed') }}"
+        # grid already contains our own charging -> headroom is ADDED to current charge
+        grid_headroom: "{{ (grid_ceiling - grid) | int }}"
+        desired_total: >-
+          {{ [[last_charge + grid_headroom, 0] | max,
+              [max_total_charge, max_per_device * n_want] | min] | min }}
+        target_total: >-
+          {% if last_charge == 0 %}{{ desired_total }}
+          {% elif desired_total >= last_charge %}{{ [desired_total, last_charge + ramp_up_step] | min }}
+          {% else %}{{ [desired_total, last_charge - ramp_down_step] | max }}
+          {% endif %}
+        charge_each: >-
+          {{ ([target_total / n_want, max_per_device] | min) | round(0) | int if n_want > 0 else 0 }}
+        c1: "{{ charge_each if want_1 else 0 }}"
+        c2: "{{ charge_each if want_2 else 0 }}"
+        total_applied: "{{ c1 + c2 }}"
+
+    - choose:
+        # 1) Toggle off: clean slate, hand back to automations 11 / 12
+        - conditions: "{{ not enabled }}"
+          sequence:
+            - if:
+                - condition: template
+                  value_template: "{{ trigger.id == 'toggle' and (last_charge != 0 or last_discharge != 0) }}"
+              then:
+                - service: number.set_value
+                  target:
+                    entity_id:
+                      - number.solarflow_800_pro_output_limit
+                      - number.solarflow_800_pro_input_limit
+                      - number.solarflow_800_pro_2_output_limit
+                      - number.solarflow_800_pro_2_input_limit
+                  data:
+                    value: 0
+                  continue_on_error: true
+                - service: input_number.set_value
+                  target:
+                    entity_id:
+                      - input_number.solarflow_discharge_last
+                      - input_number.solarflow_charge_last
+                  data:
+                    value: 0
+            - stop: "Emergency charge off - automations 11/12 in control"
+
+        # 2) No battery data at all: do nothing (keep toggle on, retry next tick)
+        - conditions: "{{ not (avail_1 or avail_2) }}"
+          sequence:
+            - stop: "No battery SoC available"
+
+        # 3) All available batteries full: zero everything, toggle off
+        - conditions: "{{ n_want == 0 }}"
+          sequence:
+            - service: number.set_value
+              target:
+                entity_id:
+                  - number.solarflow_800_pro_output_limit
+                  - number.solarflow_800_pro_input_limit
+                  - number.solarflow_800_pro_2_output_limit
+                  - number.solarflow_800_pro_2_input_limit
+              data:
+                value: 0
+              continue_on_error: true
+            - service: input_number.set_value
+              target:
+                entity_id:
+                  - input_number.solarflow_discharge_last
+                  - input_number.solarflow_charge_last
+              data:
+                value: 0
+            - service: input_boolean.turn_off
+              target:
+                entity_id: input_boolean.solarflow_emergency_charge
+            - service: system_log.write
+              data:
+                level: info
+                logger: solarflow_grid_control
+                message: "EMERGENCYCHARGE complete: soc={{ soc_1 }}/{{ soc_2 }}% -> toggle off, back to automations 11/12"
+            - service: notify.mobile_app_v5
+              data:
+                title: "SolarFlow: Carga de emergência CONCLUÍDA"
+                message: >-
+                  Baterias carregadas ({{ soc_1 | round(0) }}% / {{ soc_2 | round(0) }}%).
+                  Modo de emergência desligado - automações normais retomadas.
+                  Hora: {{ now().strftime('%H:%M') }}
+            - stop: "Batteries full"
+
+        # 4) Charge (headroom-capped, ramped)
+        - conditions: "{{ grid_valid and total_applied >= min_charge }}"
+          sequence:
+            - service: select.select_option
+              target:
+                entity_id:
+                  - select.solarflow_800_pro_ac_mode
+                  - select.solarflow_800_pro_2_ac_mode
+              data:
+                option: "input"
+              continue_on_error: true
+            - service: number.set_value
+              target:
+                entity_id:
+                  - number.solarflow_800_pro_output_limit
+                  - number.solarflow_800_pro_2_output_limit
+              data:
+                value: 0
+              continue_on_error: true
+            - service: number.set_value
+              target:
+                entity_id: number.solarflow_800_pro_input_limit
+              data:
+                value: "{{ c1 }}"
+              continue_on_error: true
+            - service: number.set_value
+              target:
+                entity_id: number.solarflow_800_pro_2_input_limit
+              data:
+                value: "{{ c2 }}"
+              continue_on_error: true
+            - service: input_number.set_value
+              target:
+                entity_id: input_number.solarflow_discharge_last
+              data:
+                value: 0
+            - service: input_number.set_value
+              target:
+                entity_id: input_number.solarflow_charge_last
+              data:
+                value: "{{ total_applied }}"
+            - service: system_log.write
+              data:
+                level: info
+                logger: solarflow_grid_control
+                message: >
+                  EMERGENCYCHARGE total={{ total_applied }}W (b1={{ c1 }} b2={{ c2 }})
+                  soc={{ soc_1 }}/{{ soc_2 }}% grid={{ grid }}W
+                  headroom={{ grid_headroom }}W trigger={{ trigger.id }}
+
+      default:
+        # Grid too busy (no headroom) or reading invalid: stop charging, keep toggle on
+        - if:
+            - condition: template
+              value_template: "{{ last_charge != 0 }}"
+          then:
+            - service: number.set_value
+              target:
+                entity_id:
+                  - number.solarflow_800_pro_input_limit
+                  - number.solarflow_800_pro_2_input_limit
+              data:
+                value: 0
+              continue_on_error: true
+            - service: input_number.set_value
+              target:
+                entity_id: input_number.solarflow_charge_last
+              data:
+                value: 0
