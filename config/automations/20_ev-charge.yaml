@@ -18,7 +18,7 @@
       target:
         entity_id: switch.ev_charger
 
-    - service: notify.mobile_app_v5
+    - service: notify.mobile_app_mbh_n49
       data:
         title: "EV: Carregamento PARADO manualmente"
         message: >-
@@ -93,7 +93,7 @@
               target:
                 entity_id: switch.ev_charger
 
-            - service: notify.mobile_app_v5
+            - service: notify.mobile_app_mbh_n49
               data:
                 title: "EV: Carregamento INICIADO (Seguro)"
                 message: >-
@@ -116,7 +116,7 @@
               target:
                 entity_id: switch.ev_charger
 
-            - service: notify.mobile_app_v5
+            - service: notify.mobile_app_mbh_n49
               data:
                 title: "🚨 EV: PARADO SOBRECONSUMO!"
                 message: >-
@@ -138,7 +138,7 @@
               target:
                 entity_id: switch.ev_charger
 
-            - service: notify.mobile_app_v5
+            - service: notify.mobile_app_mbh_n49
               data:
                 title: "EV: PARADO Horário"
                 message: >-

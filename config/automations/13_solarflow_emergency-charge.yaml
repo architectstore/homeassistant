@@ -139,7 +139,7 @@
                 level: info
                 logger: solarflow_grid_control
                 message: "EMERGENCYCHARGE complete: soc={{ soc_1 }}/{{ soc_2 }}% -> toggle off, back to automations 11/12"
-            - service: notify.mobile_app_v5
+            - service: notify.mobile_app_mbh_n49
               data:
                 title: "SolarFlow: Carga de emergência CONCLUÍDA"
                 message: >-
