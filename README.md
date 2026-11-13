@@ -113,9 +113,12 @@ and `number.ev_charger_charging_current`.
 - **`templates/13_grid_safety.yaml`** — `binary_sensor.grid_low_safe_for_ev`
   (< 2000 W) and `binary_sensor.grid_high_alert_ev` (> 4900 W), gating the EV
   night-schedule automation.
-- **`templates/15_solarflow_plan.yaml`** — `sensor.solarflow_night_target_soc`
-  and `binary_sensor.solarflow_low_pv_day`, the forecast-based plan used by
-  autos 11 and 12.
+- **`templates/15_solarflow_plan.yaml`** — temperature-derived expected
+  consumption, `sensor.solarflow_night_target_soc`, and
+  `binary_sensor.solarflow_low_pv_day`, the forecast-based plan used by autos
+  11 and 12.
+- **`templates/17_weather_forecast.yaml`** — caches today's and tomorrow's
+  daily forecast for dashboards and SolarFlow planning.
 - **`templates/14_solarflow-pv.yaml`** — sums the 4 solar-string power
   sensors on each of the two SolarFlow devices into
   `sensor.solarflow_pv_power_total`.
@@ -125,7 +128,8 @@ and `number.ev_charger_charging_current`.
 - `helpers/input_number.yaml` — `solarflow_discharge_last` /
   `solarflow_charge_last` (last commanded total watts), `solarflow_soc_discharge_min`
   / `solarflow_soc_charge_max` (SoC floor/cap, managed by auto 14),
-  `solarflow_daily_consumption_kwh` (used by the night target SoC).
+  `solarflow_daily_consumption_kwh` (manual fallback for the night target SoC
+  when weather data is unavailable).
   `solarflow_min_delta`, `solarflow_deadband`, `solarflow_evening_soc_min`,
   `solarflow_low_pv_soc_limit` and `solarflow_pv_threshold_kwh` are defined
   but currently unused (auto 11 hard-codes its own `min_delta` of 30 W).

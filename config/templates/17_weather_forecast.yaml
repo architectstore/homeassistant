@@ -1,0 +1,54 @@
+# Cache today's and tomorrow's daily weather forecasts for dashboards and automations.
+# Change weather.home below if your weather integration uses a different entity ID.
+- trigger:
+    - trigger: time_pattern
+      hours: "/1"
+    - trigger: homeassistant
+      event: start
+  action:
+    - action: weather.get_forecasts
+      target:
+        entity_id: weather.home
+      data:
+        type: daily
+      response_variable: ag_forecast
+  sensor:
+    - name: "Today Weather Forecast"
+      unique_id: today_weather_forecast
+      icon: mdi:weather-partly-cloudy
+      availability: >-
+        {{ ag_forecast is defined
+           and ag_forecast.get('weather.home', {}).get('forecast', []) | count > 0 }}
+      state: >-
+        {{ ag_forecast['weather.home'].forecast[0].get('condition', 'unknown') }}
+      attributes:
+        temperature: >-
+          {{ ag_forecast['weather.home'].forecast[0].get('temperature') }}
+        templow: >-
+          {{ ag_forecast['weather.home'].forecast[0].get('templow') }}
+        precipitation: >-
+          {{ ag_forecast['weather.home'].forecast[0].get('precipitation') }}
+        precipitation_probability: >-
+          {{ ag_forecast['weather.home'].forecast[0].get('precipitation_probability') }}
+        datetime: >-
+          {{ ag_forecast['weather.home'].forecast[0].get('datetime') }}
+
+    - name: "Tomorrow Weather Forecast"
+      unique_id: tomorrow_weather_forecast
+      icon: mdi:weather-partly-cloudy
+      availability: >-
+        {{ ag_forecast is defined
+           and ag_forecast.get('weather.home', {}).get('forecast', []) | count > 1 }}
+      state: >-
+        {{ ag_forecast['weather.home'].forecast[1].get('condition', 'unknown') }}
+      attributes:
+        temperature: >-
+          {{ ag_forecast['weather.home'].forecast[1].get('temperature') }}
+        templow: >-
+          {{ ag_forecast['weather.home'].forecast[1].get('templow') }}
+        precipitation: >-
+          {{ ag_forecast['weather.home'].forecast[1].get('precipitation') }}
+        precipitation_probability: >-
+          {{ ag_forecast['weather.home'].forecast[1].get('precipitation_probability') }}
+        datetime: >-
+          {{ ag_forecast['weather.home'].forecast[1].get('datetime') }}

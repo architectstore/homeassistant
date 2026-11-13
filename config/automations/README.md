@@ -130,8 +130,12 @@ the batteries.
   PV forecast) / 7.68 kWh, clamped to floor..`soc_charge_max`. Forecast = today's
   total before 12:00, tomorrow's after.
 - `binary_sensor.solarflow_low_pv_day` = target > floor + 10 %.
-- `input_number.solarflow_daily_consumption_kwh` (default 5; **set ≈12 for
-  Dec–Feb heating season**).
+- `sensor.solarflow_planned_high_tariff_consumption_kwh` selects the maximum
+  forecast temperature for the same planning day: ≥18 °C = 4 kWh, ≥16 °C =
+  6 kWh, ≥14 °C = 7 kWh, and <14 °C = 10 kWh. It uses today's forecast before
+  12:00 and tomorrow's forecast afterwards.
+- `input_number.solarflow_daily_consumption_kwh` remains the manual fallback
+  when the selected weather forecast has no numeric maximum temperature.
 
 **Ownership with auto 11**: 12 owns 23:00–07:00 always, and 22:00–23:00 /
 07:00–08:00 only when `low_pv_day` is on (11 stands down in those hours).
@@ -233,7 +237,7 @@ This file has **two** automations:
 | `input_number.solarflow_charge_last` | 0 (max 2000) | Total charge limit last set (both devices) |
 | `input_number.solarflow_soc_discharge_min` | 25 | Configurable minimum SoC floor for discharge, set directly in the helper |
 | `input_number.solarflow_soc_charge_max` | 100 | Max SoC for solar charge absorption (managed by auto 14) |
-| `input_number.solarflow_daily_consumption_kwh` | 5 | Expected high-tariff-hours consumption, used by `sensor.solarflow_night_target_soc` (set ≈12 for Dec–Feb) |
+| `input_number.solarflow_daily_consumption_kwh` | 5 | Manual fallback consumption when the selected weather forecast has no numeric maximum temperature |
 | `input_boolean.solarflow_night_charge_planned` | off | Latch flag used only by auto 12 (keeps a started night charge from aborting on a restart) |
 | `input_boolean.ev_charge_enable` | — | Master EV charging kill switch, read by autos 20 and 21 |
 | `input_boolean.ev_session_solar` | off | Set by auto 21 when it starts a solar session; makes auto 20's 08:00 stop skip it |

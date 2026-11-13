@@ -2,11 +2,54 @@
 #
 # Forecast used = the day the batteries have to cover:
 #   00:00-12:00 -> today's total, 12:00-24:00 -> tomorrow's total.
+# Expected high-tariff consumption is derived from the maximum forecast
+# temperature for that same day. The manual helper is the safe fallback when
+# weather data is unavailable.
 # Energy needed from the batteries (kWh) = daily consumption in HIGH-tariff hours
 #   minus the part of the PV forecast that is actually usable (60 %).
 # Target SoC = discharge floor + need / 7.68 kWh (2 x 3.84), clamped to the
 #   floor..charge-max range (charge-max is managed by automation 14).
 - sensor:
+    - name: "SolarFlow planned high-tariff consumption"
+      unique_id: solarflow_planned_high_tariff_consumption_kwh
+      unit_of_measurement: "kWh"
+      device_class: energy
+      state_class: measurement
+      icon: mdi:home-thermometer
+      availability: >-
+        {% set weather_entity = 'sensor.today_weather_forecast'
+                                if now().hour < 12 else
+                                'sensor.tomorrow_weather_forecast' %}
+        {{ is_number(state_attr(weather_entity, 'temperature'))
+           or is_number(states('input_number.solarflow_daily_consumption_kwh')) }}
+      state: >-
+        {% set weather_entity = 'sensor.today_weather_forecast'
+                                if now().hour < 12 else
+                                'sensor.tomorrow_weather_forecast' %}
+        {% set temperature = state_attr(weather_entity, 'temperature') %}
+        {% if is_number(temperature) %}
+          {% set maximum = temperature | float %}
+          {{ 4 if maximum >= 18 else 6 if maximum >= 16 else 7 if maximum >= 14 else 10 }}
+        {% else %}
+          {{ states('input_number.solarflow_daily_consumption_kwh') | float(5) }}
+        {% endif %}
+      attributes:
+        forecast_temperature: >-
+          {% set weather_entity = 'sensor.today_weather_forecast'
+                                  if now().hour < 12 else
+                                  'sensor.tomorrow_weather_forecast' %}
+          {{ state_attr(weather_entity, 'temperature') }}
+        forecast_day: "{{ 'today' if now().hour < 12 else 'tomorrow' }}"
+        source_entity: >-
+          {{ 'sensor.today_weather_forecast' if now().hour < 12 else
+             'sensor.tomorrow_weather_forecast' }}
+        source: >-
+          {% set weather_entity = 'sensor.today_weather_forecast'
+                                  if now().hour < 12 else
+                                  'sensor.tomorrow_weather_forecast' %}
+          {{ 'weather' if is_number(state_attr(weather_entity, 'temperature'))
+             else 'manual_fallback' }}
+
     - name: "SolarFlow night target SoC"
       unique_id: solarflow_night_target_soc
       unit_of_measurement: "%"
@@ -38,12 +81,12 @@
         {% endfor %}
         {% set fc_fresh = ns.ok and ns.oldest < 6 * 3600 %}
         {{ is_number(states(fc_entity)) and fc_fresh
-           and is_number(states('input_number.solarflow_daily_consumption_kwh')) }}
+           and is_number(states('sensor.solarflow_planned_high_tariff_consumption_kwh')) }}
       state: >-
         {% set fc = states('sensor.solar_production_estimate_today_total'
                            if now().hour < 12 else
                            'sensor.solar_production_estimate_tomorrow_total') | float(0) %}
-        {% set use = states('input_number.solarflow_daily_consumption_kwh') | float(5) %}
+        {% set use = states('sensor.solarflow_planned_high_tariff_consumption_kwh') | float(5) %}
         {% set floor = states('input_number.solarflow_soc_discharge_min') | float(25) %}
         {% set cap = states('input_number.solarflow_soc_charge_max') | float(90) %}
         {% set need = use - 0.6 * fc %}
