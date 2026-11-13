@@ -87,21 +87,24 @@
       device_class: battery
       state_class: measurement
       state: >
-        {{ state_attr('sensor.zendure_solarflow_raw', 'packData')[0]['socLevel'] }}
+        {% set p = state_attr('sensor.zendure_solarflow_raw', 'packData') %}
+        {{ p[0]['socLevel'] if p is not none and p | count > 0 else none }}
 
     - name: "Zendure Pack 2 SoC"
       unit_of_measurement: "%"
       device_class: battery
       state_class: measurement
       state: >
-        {{ state_attr('sensor.zendure_solarflow_raw', 'packData')[1]['socLevel'] }}
+        {% set p = state_attr('sensor.zendure_solarflow_raw', 'packData') %}
+        {{ p[1]['socLevel'] if p is not none and p | count > 1 else none }}
 
     - name: "Zendure Pack 3 SoC"
       unit_of_measurement: "%"
       device_class: battery
       state_class: measurement
       state: >
-        {{ state_attr('sensor.zendure_solarflow_raw', 'packData')[2]['socLevel'] }}
+        {% set p = state_attr('sensor.zendure_solarflow_raw', 'packData') %}
+        {{ p[2]['socLevel'] if p is not none and p | count > 2 else none }}
 
     - name: "Zendure Output Pack Power"
       unit_of_measurement: "W"

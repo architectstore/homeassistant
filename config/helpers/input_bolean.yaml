@@ -15,3 +15,8 @@ ev_charge_enable:
 solarflow_emergency_charge:
   name: "SolarFlow emergency charge"
   icon: mdi:battery-alert-variant
+  initial: false
+
+ev_session_solar:
+  name: "EV session started on solar"
+  icon: mdi:solar-power

@@ -18,7 +18,11 @@
       target:
         entity_id: switch.ev_charger
 
-    - service: notify.mobile_app_mbh_n49
+    - service: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.ev_session_solar
+
+    - service: notify.mobile_app_v5
       data:
         title: "EV: Carregamento PARADO manualmente"
         message: >-
@@ -57,6 +61,15 @@
       id: 'overload'
 
   action:
+    # At 22:00 a solar session becomes a normal night session (stopped at 08:00)
+    - if:
+        - condition: trigger
+          id: 'night_on'
+      then:
+        - service: input_boolean.turn_off
+          target:
+            entity_id: input_boolean.ev_session_solar
+
     - choose:
         # 1. LIGA: horário noite + rede baixa + charger pronto + enable on
         - conditions:
@@ -87,13 +100,17 @@
               data:
                 value: 13
 
+            - service: input_boolean.turn_off
+              target:
+                entity_id: input_boolean.ev_session_solar
+
             - delay: "00:00:05"
 
             - service: switch.turn_on
               target:
                 entity_id: switch.ev_charger
 
-            - service: notify.mobile_app_mbh_n49
+            - service: notify.mobile_app_v5
               data:
                 title: "EV: Carregamento INICIADO (Seguro)"
                 message: >-
@@ -116,7 +133,11 @@
               target:
                 entity_id: switch.ev_charger
 
-            - service: notify.mobile_app_mbh_n49
+            - service: input_boolean.turn_off
+              target:
+                entity_id: input_boolean.ev_session_solar
+
+            - service: notify.mobile_app_v5
               data:
                 title: "🚨 EV: PARADO SOBRECONSUMO!"
                 message: >-
@@ -133,12 +154,16 @@
             - condition: state
               entity_id: input_boolean.ev_charge_enable
               state: "on"
+            # A session that started on solar keeps going; 21 stops it on import
+            - condition: state
+              entity_id: input_boolean.ev_session_solar
+              state: "off"
           sequence:
             - service: switch.turn_off
               target:
                 entity_id: switch.ev_charger
 
-            - service: notify.mobile_app_mbh_n49
+            - service: notify.mobile_app_v5
               data:
                 title: "EV: PARADO Horário"
                 message: >-

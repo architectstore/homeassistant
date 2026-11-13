@@ -12,9 +12,14 @@
 #
 # Discharge floor: solarflow_soc_discharge_min, independently per battery.
 #
+# Evening hold (22:00–23:00): a battery is not discharged when its SoC is
+# under 40% AND tomorrow's PV forecast is under 12 kWh, so it isn't drained
+# right before a weak-PV day.
+#
 # EV priority: while the EV is connected, enabled, and not yet charging,
 # reserve up to ev_reserve_w of raw solar surplus for it (see automation 21's
-# -2500W start threshold) so the battery doesn't claim export the EV could
+# -2000W start threshold; the reserve is 2300W for margin) so the battery
+# doesn't claim export the EV could
 # use to start a solar-charge session. Once the EV is actually charging,
 # the reservation drops and the battery is free to use any leftover surplus.
 #
@@ -82,9 +87,13 @@
     - condition: template
       value_template: >
         {{ has_value('sensor.shelly_phase_a_power')
-           and has_value('sensor.solarflow_800_pro_electric_level')
-           and has_value('number.solarflow_800_pro_output_limit')
-           and has_value('number.solarflow_800_pro_input_limit') }}
+           and ((has_value('sensor.solarflow_800_pro_electric_level')
+                 and has_value('number.solarflow_800_pro_output_limit')
+                 and has_value('number.solarflow_800_pro_input_limit'))
+                or
+                (has_value('sensor.solarflow_800_pro_2_electric_level')
+                 and has_value('number.solarflow_800_pro_2_output_limit')
+                 and has_value('number.solarflow_800_pro_2_input_limit'))) }}
 
   action:
     - variables:
@@ -99,13 +108,24 @@
         max_discharge: 1600
         max_charge: 2000
         per_device_max: 800
-        ev_reserve_w: 2500
+        per_device_max_charge: 1000
+        ev_reserve_w: 2300    # 300 W under automation 21's -2000 W start threshold, so export clears it
 
         # ---------------- measurements ----------------
         grid: "{{ states('sensor.shelly_phase_a_power') | float(0) }}"
-        soc_1: "{{ states('sensor.solarflow_800_pro_electric_level') | float(50) }}"
-        soc_2: "{{ states('sensor.solarflow_800_pro_2_electric_level') | float(50) }}"
-        soc: "{{ (soc_1 + soc_2) / 2 }}"
+        # A device counts as available only with its SoC AND both limits readable.
+        # An offline device is never assumed to be at 50 %: it is simply skipped
+        # (no discharge, no charge) and the other device takes the full share.
+        avail_1: >-
+          {{ has_value('sensor.solarflow_800_pro_electric_level')
+             and has_value('number.solarflow_800_pro_output_limit')
+             and has_value('number.solarflow_800_pro_input_limit') }}
+        avail_2: >-
+          {{ has_value('sensor.solarflow_800_pro_2_electric_level')
+             and has_value('number.solarflow_800_pro_2_output_limit')
+             and has_value('number.solarflow_800_pro_2_input_limit') }}
+        soc_1: "{{ states('sensor.solarflow_800_pro_electric_level') | float(0) }}"
+        soc_2: "{{ states('sensor.solarflow_800_pro_2_electric_level') | float(0) }}"
         last_dis: "{{ states('input_number.solarflow_discharge_last') | float(0) | int }}"
         last_ch: "{{ states('input_number.solarflow_charge_last') | float(0) | int }}"
         # signed command: + discharge, - charge
@@ -118,15 +138,29 @@
         # ---------------- policy ----------------
         soc_discharge_min: "{{ states('input_number.solarflow_soc_discharge_min') | float(25) | int }}"
         soc_charge_max: "{{ states('input_number.solarflow_soc_charge_max') | float(90) | int }}"
-        floor_1: "{{ soc_1 <= soc_discharge_min }}"
-        floor_2: "{{ soc_2 <= soc_discharge_min }}"
+        # Evening hold: from 22:00, a battery is not discharged when BOTH of:
+        #   - its SoC is under evening_hold_soc
+        #   - tomorrow's PV forecast is under evening_hold_pv_kwh
+        # i.e. don't drain a battery that's already low right before a weak-PV
+        # day. Treated like the floor below.
+        evening_hold_pv_kwh: 12
+        evening_hold_soc: 40
+        pv_forecast_tomorrow: "{{ states('sensor.solar_production_estimate_tomorrow_total') | float(999) }}"
+        evening_hold: "{{ now().strftime('%H:%M') >= '22:00' and pv_forecast_tomorrow < evening_hold_pv_kwh }}"
+        floor_1: "{{ (not avail_1) or (soc_1 <= soc_discharge_min) or (evening_hold and soc_1 < evening_hold_soc) }}"
+        floor_2: "{{ (not avail_2) or (soc_2 <= soc_discharge_min) or (evening_hold and soc_2 < evening_hold_soc) }}"
         n_avail: "{{ (0 if floor_1 else 1) + (0 if floor_2 else 1) }}"
         dis_limit: "{{ [max_discharge, per_device_max * n_avail] | min }}"
+        # Per-battery charge ceiling (mirrors the discharge floors): a battery at
+        # or above soc_charge_max stops charging while the other one continues.
+        full_1: "{{ (not avail_1) or soc_1 >= soc_charge_max }}"
+        full_2: "{{ (not avail_2) or soc_2 >= soc_charge_max }}"
+        ch_n: "{{ (0 if full_1 else 1) + (0 if full_2 else 1) }}"
 
         # Charge only with the sun up (~30 min after sunrise / before sunset)
         sun_ok: "{{ state_attr('sun.sun', 'elevation') | float(0) > 3 }}"
         # EV priority: leave ev_reserve_w of raw surplus visible as export
-        # until the EV has started (automation 21 starts at -2500 W).
+        # until the EV has started (automation 21 starts at -2000 W).
         ev_ready_to_start: >-
           {{ is_state('binary_sensor.ev_charger_connectivity', 'on')
              and is_state('input_boolean.ev_charge_enable', 'on')
@@ -135,7 +169,7 @@
         charge_cap: >-
           {{ (raw_surplus - ev_reserve_w) | int
              if (ev_ready_to_start and raw_surplus > ev_reserve_w) else max_charge }}
-        ch_limit: "{{ ([charge_cap, max_charge] | min) if (sun_ok and soc < soc_charge_max) else 0 }}"
+        ch_limit: "{{ ([charge_cap, max_charge, per_device_max_charge * ch_n] | min) if (sun_ok and ch_n > 0) else 0 }}"
 
         # ---------------- control law ----------------
         error: "{{ grid - target_import }}"
@@ -157,7 +191,8 @@
         ch_total: "{{ [-p_target, 0] | max }}"
         d1: "{{ 0 if (floor_1 or n_avail == 0) else ((dis_total / n_avail) | round(0) | int) }}"
         d2: "{{ 0 if (floor_2 or n_avail == 0) else ((dis_total / n_avail) | round(0) | int) }}"
-        c_each: "{{ (ch_total / 2) | round(0) | int }}"
+        c1: "{{ 0 if (full_1 or ch_n == 0) else ((ch_total / ch_n) | round(0) | int) }}"
+        c2: "{{ 0 if (full_2 or ch_n == 0) else ((ch_total / ch_n) | round(0) | int) }}"
         want_mode: "{{ 'input' if p_target < 0 else 'output' }}"
 
         # ---------------- decide whether to act ----------------
@@ -176,8 +211,8 @@
         mismatch: >-
           {{ (has_value('number.solarflow_800_pro_output_limit') and (out1_now - d1) | abs > 30)
              or (has_value('number.solarflow_800_pro_2_output_limit') and (out2_now - d2) | abs > 30)
-             or (has_value('number.solarflow_800_pro_input_limit') and (in1_now - c_each) | abs > 30)
-             or (has_value('number.solarflow_800_pro_2_input_limit') and (in2_now - c_each) | abs > 30) }}
+             or (has_value('number.solarflow_800_pro_input_limit') and (in1_now - c1) | abs > 30)
+             or (has_value('number.solarflow_800_pro_2_input_limit') and (in2_now - c2) | abs > 30) }}
         act: "{{ (settled or floor_cutoff_pending) and (changed or mismatch) }}"
 
     - condition: template
@@ -214,11 +249,15 @@
       continue_on_error: true
     - service: number.set_value
       target:
-        entity_id:
-          - number.solarflow_800_pro_input_limit
-          - number.solarflow_800_pro_2_input_limit
+        entity_id: number.solarflow_800_pro_input_limit
       data:
-        value: "{{ c_each }}"
+        value: "{{ c1 }}"
+      continue_on_error: true
+    - service: number.set_value
+      target:
+        entity_id: number.solarflow_800_pro_2_input_limit
+      data:
+        value: "{{ c2 }}"
       continue_on_error: true
 
     - service: input_number.set_value
@@ -238,5 +277,5 @@
         logger: solarflow_grid_control
         message: >
           GRIDZERO grid={{ grid }}W err={{ error | round(0) }} p {{ p_last }}->{{ p_target }}W
-          (dis b1={{ d1 }} b2={{ d2 }}, ch/dev={{ c_each }}) soc={{ soc_1 }}/{{ soc_2 }}%
+          (dis b1={{ d1 }} b2={{ d2 }}, ch b1={{ c1 }} b2={{ c2 }}) soc={{ soc_1 }}/{{ soc_2 }}%
           ch_limit={{ ch_limit }} settled={{ settled }} mismatch={{ mismatch }} trigger={{ trigger.id }}

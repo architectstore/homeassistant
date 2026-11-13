@@ -1,13 +1,3 @@
-solarflow_min_delta:
-  name: SolarFlow min power delta
-  min: 0
-  max: 100 # keep this, so you can try 60/80 later
-  step: 10
-  unit_of_measurement: W
-  mode: box
-  initial: 50
-  icon: mdi:delta
-
 solarflow_discharge_last:
   name: SolarFlow last discharge limit (total both devices)
   min: 0
@@ -15,7 +5,6 @@ solarflow_discharge_last:
   step: 10
   unit_of_measurement: W
   mode: box
-  initial: 0
   icon: mdi:battery-arrow-down
 
 solarflow_charge_last:
@@ -25,18 +14,7 @@ solarflow_charge_last:
   step: 10
   unit_of_measurement: W
   mode: box
-  initial: 0
   icon: mdi:battery-arrow-up
-
-solarflow_deadband:
-  name: SolarFlow grid deadband
-  min: 0
-  max: 200 # keep this, so you can raise deadband if needed
-  step: 5
-  unit_of_measurement: W
-  mode: slider
-  initial: 50 # this is your “target ~50 W surplus”
-  icon: mdi:sine-wave
 
 solarflow_soc_discharge_min:
   name: "11 SolarFlow min SoC for discharge"
@@ -45,7 +23,6 @@ solarflow_soc_discharge_min:
   step: 1
   unit_of_measurement: "%"
   mode: slider
-  initial: 25
   icon: mdi:battery-arrow-down
 
 solarflow_soc_charge_max:
@@ -55,38 +32,7 @@ solarflow_soc_charge_max:
   step: 1
   unit_of_measurement: "%"
   mode: slider
-  initial: 100
   icon: mdi:battery-arrow-up
-
-solarflow_low_pv_soc_limit:
-  name: "12 SolarFlow Low-PV SoC Limit"
-  min: 0
-  max: 100
-  step: 1
-  unit_of_measurement: "%"
-  mode: slider
-  initial: 40
-  icon: mdi:battery-medium
-
-solarflow_pv_threshold_kwh:
-  name: "12 SolarFlow PV Threshold (kWh)"
-  min: 0
-  max: 30
-  step: 0.1
-  unit_of_measurement: "kWh"
-  mode: slider
-  initial: 5
-  icon: mdi:weather-sunny
-
-solarflow_evening_soc_min:
-  name: "11 SolarFlow evening SoC min"
-  min: 0
-  max: 100
-  step: 1
-  unit_of_measurement: "%"
-  mode: slider
-  initial: 45
-  icon: mdi:battery-lock
 
 solarflow_daily_consumption_kwh:
   name: "12 Daily consumption in high-tariff hours"
@@ -95,5 +41,4 @@ solarflow_daily_consumption_kwh:
   step: 0.5
   unit_of_measurement: "kWh"
   mode: slider
-  initial: 5   # ~5 kWh without heating, ~12 kWh Dec-Feb with heating
   icon: mdi:home-lightning-bolt

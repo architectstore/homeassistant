@@ -34,7 +34,7 @@
               data:
                 temperature: 26
 
-            - service: notify.mobile_app_mbh_n49
+            - service: notify.mobile_app_v5
               data:
                 title: "Attic AC turned on"
                 message: >-
@@ -44,7 +44,7 @@
             - condition: trigger
               id: ac_off
           sequence:
-            - service: notify.mobile_app_mbh_n49
+            - service: notify.mobile_app_v5
               data:
                 title: "Attic AC turned off"
                 message: >-

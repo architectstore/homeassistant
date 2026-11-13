@@ -13,9 +13,31 @@
       state_class: measurement
       icon: mdi:battery-charging-high
       availability: >-
-        {{ is_number(states('sensor.solar_production_estimate_today_total'
-                            if now().hour < 12 else
-                            'sensor.solar_production_estimate_tomorrow_total'))
+        {# Freshness is judged on ALL FOUR source forecast sensors' last_reported
+           (bumps on every integration refresh, even when the value is unchanged).
+           last_updated on the derived total only moves when the value changes,
+           so it would wrongly expire on a stable overnight forecast. #}
+        {% set fc_entity = 'sensor.solar_production_estimate_today_total'
+                           if now().hour < 12 else
+                           'sensor.solar_production_estimate_tomorrow_total' %}
+        {% set base = 'sensor.energy_production_today'
+                      if now().hour < 12 else
+                      'sensor.energy_production_tomorrow' %}
+        {% set srcs = [base, base ~ '_2', base ~ '_3', base ~ '_4'] %}
+        {# Oldest of the four sources decides: one stalled source is enough
+           to make the summed total unreliable. #}
+        {% set ns = namespace(oldest=0, ok=true) %}
+        {% for e in srcs %}
+          {% set s = states[e] %}
+          {% if s is none %}
+            {% set ns.ok = false %}
+          {% else %}
+            {% set age = as_timestamp(now()) - as_timestamp(s.last_reported or s.last_updated) %}
+            {% set ns.oldest = [ns.oldest, age] | max %}
+          {% endif %}
+        {% endfor %}
+        {% set fc_fresh = ns.ok and ns.oldest < 6 * 3600 %}
+        {{ is_number(states(fc_entity)) and fc_fresh
            and is_number(states('input_number.solarflow_daily_consumption_kwh')) }}
       state: >-
         {% set fc = states('sensor.solar_production_estimate_today_total'

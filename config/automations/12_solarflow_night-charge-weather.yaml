@@ -124,6 +124,13 @@
         last_charge: "{{ states('input_number.solarflow_charge_last') | float(0) | int }}"
         last_discharge: "{{ states('input_number.solarflow_discharge_last') | float(0) | int }}"
         grid: "{{ states('sensor.shelly_phase_a_power_smoothed') | float(0) }}"
+        # Unknown/unavailable grid must NOT read as 0 W (= full headroom)
+        grid_valid: "{{ has_value('sensor.shelly_phase_a_power_smoothed') }}"
+        # Device limits actually set (helpers reset on restart; devices don't)
+        limits_dirty: >-
+          {{ ['number.solarflow_800_pro_output_limit', 'number.solarflow_800_pro_input_limit',
+              'number.solarflow_800_pro_2_output_limit', 'number.solarflow_800_pro_2_input_limit']
+             | select('has_value') | map('states') | map('float', 0) | select('>', 0) | list | count > 0 }}
         # grid already contains our own charging, so headroom is ADDED to the
         # current charge (not used as the absolute charge power).
         grid_headroom: "{{ (grid_ceiling - grid) | int }}"
@@ -160,7 +167,7 @@
                 entity_id: input_boolean.solarflow_night_charge_planned
             - if:
                 - condition: template
-                  value_template: "{{ last_charge != 0 or last_discharge != 0 }}"
+                  value_template: "{{ last_charge != 0 or last_discharge != 0 or limits_dirty }}"
               then:
                 - service: number.set_value
                   target:
@@ -195,7 +202,7 @@
           sequence:
             - if:
                 - condition: template
-                  value_template: "{{ last_charge != 0 or last_discharge != 0 }}"
+                  value_template: "{{ last_charge != 0 or last_discharge != 0 or limits_dirty }}"
               then:
                 - service: number.set_value
                   target:
@@ -219,7 +226,7 @@
         # 3) Charge the batteries that are below target
         - conditions:
             - condition: template
-              value_template: "{{ want_any and total_applied >= min_charge }}"
+              value_template: "{{ want_any and grid_valid and total_applied >= min_charge }}"
           sequence:
             - service: select.select_option
               target:
@@ -271,7 +278,7 @@
       default:
         # In our window, nothing (more) to charge: idle if anything is still set
         - condition: template
-          value_template: "{{ last_charge != 0 or last_discharge != 0 }}"
+          value_template: "{{ last_charge != 0 or last_discharge != 0 or limits_dirty }}"
         - service: number.set_value
           target:
             entity_id:

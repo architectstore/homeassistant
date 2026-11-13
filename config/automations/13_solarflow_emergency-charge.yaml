@@ -38,6 +38,13 @@
     - platform: homeassistant
       event: start
       id: ha_startup
+    # Safety net: a battery that never reports >= full_soc (e.g. device-side
+    # charge limit) must not keep the toggle on and block 11/12 forever.
+    - platform: state
+      entity_id: input_boolean.solarflow_emergency_charge
+      to: "on"
+      for: "06:00:00"
+      id: timeout
 
   action:
     - variables:
@@ -80,6 +87,43 @@
         total_applied: "{{ c1 + c2 }}"
 
     - choose:
+        # 0) Timeout: give up, zero everything, hand back to 11 / 12
+        - conditions: "{{ trigger.id == 'timeout' }}"
+          sequence:
+            - service: input_boolean.turn_off
+              target:
+                entity_id: input_boolean.solarflow_emergency_charge
+            - service: number.set_value
+              target:
+                entity_id:
+                  - number.solarflow_800_pro_output_limit
+                  - number.solarflow_800_pro_input_limit
+                  - number.solarflow_800_pro_2_output_limit
+                  - number.solarflow_800_pro_2_input_limit
+              data:
+                value: 0
+              continue_on_error: true
+            - service: input_number.set_value
+              target:
+                entity_id:
+                  - input_number.solarflow_discharge_last
+                  - input_number.solarflow_charge_last
+              data:
+                value: 0
+            - service: system_log.write
+              data:
+                level: warning
+                logger: solarflow_grid_control
+                message: "EMERGENCYCHARGE timeout after 6 h: soc={{ soc_1 }}/{{ soc_2 }}% -> toggle off"
+            - service: notify.mobile_app_v5
+              data:
+                title: "SolarFlow: Carga de emergência INTERROMPIDA"
+                message: >-
+                  Tempo máximo (6 h) atingido sem as baterias chegarem a {{ full_soc }}%
+                  ({{ soc_1 | round(0) }}% / {{ soc_2 | round(0) }}%). Modo de emergência
+                  desligado - automações normais retomadas.
+            - stop: "Emergency charge timeout"
+
         # 1) Toggle off: clean slate, hand back to automations 11 / 12
         - conditions: "{{ not enabled }}"
           sequence:
@@ -139,7 +183,7 @@
                 level: info
                 logger: solarflow_grid_control
                 message: "EMERGENCYCHARGE complete: soc={{ soc_1 }}/{{ soc_2 }}% -> toggle off, back to automations 11/12"
-            - service: notify.mobile_app_mbh_n49
+            - service: notify.mobile_app_v5
               data:
                 title: "SolarFlow: Carga de emergência CONCLUÍDA"
                 message: >-

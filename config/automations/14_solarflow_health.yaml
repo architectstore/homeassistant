@@ -1,0 +1,74 @@
+# ============================================================================
+# BATTERY HEALTH: caps charge at 90 % normally, allows 100 % every 15 days.
+# "Full" = BOTH batteries (the ones that are online) at >= 98.9 % for 20 min.
+# ============================================================================
+- id: battery_health_management
+  alias: "Battery health management"
+  mode: single
+  trace:
+    stored_traces: 20
+
+  trigger:
+    # Full event: every online battery >= ~99 % for 20 min
+    - platform: template
+      value_template: >-
+        {% set socs = [states('sensor.solarflow_800_pro_electric_level'),
+                       states('sensor.solarflow_800_pro_2_electric_level')]
+                      | select('is_number') | map('float') | list %}
+        {{ socs | count > 0 and socs | min > 98.9 }}
+      for: "00:20:00"
+      id: reached_full
+
+    # Recompute regularly so it applies even without crossings
+    - platform: time_pattern
+      hours: "/1"
+      id: hourly_recalc
+
+    - platform: time
+      at: "00:05:00"
+      id: daily_recalc
+
+    - platform: homeassistant
+      event: start
+      id: ha_start
+
+  action:
+    # Record the full date FIRST, so the cap computed below already sees it
+    - choose:
+        - conditions: "{{ trigger.id == 'reached_full' }}"
+          sequence:
+            - service: input_text.set_value
+              target:
+                entity_id: input_text.zendure_last_full_date
+              data:
+                value: "{{ now().strftime('%Y-%m-%d') }}"
+
+    - variables:
+        # --- TUNABLES ---
+        full_interval_days: 15
+        cap_normal: 90
+        cap_full: 100
+
+        # --- DATE PARSING (evaluated after the write above) ---
+        today0: "{{ now().replace(hour=0, minute=0, second=0, microsecond=0) }}"
+        last_full_str: "{{ states('input_text.zendure_last_full_date') }}"
+        last_full_dt: >-
+          {% if last_full_str is match('^\\d{4}-\\d{2}-\\d{2}$') %}
+            {{ as_datetime(last_full_str ~ ' 00:00:00') }}
+          {% else %}
+            {{ none }}
+          {% endif %}
+        days_since_full: >-
+          {% if last_full_dt is not none %}
+            {{ (today0.date() - last_full_dt.date()).days }}
+          {% else %}
+            9999
+          {% endif %}
+        allow_full: "{{ days_since_full >= (full_interval_days | int) }}"
+        target_charge_cap: "{{ cap_full if allow_full else cap_normal }}"
+
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.solarflow_soc_charge_max
+      data:
+        value: "{{ target_charge_cap }}"

@@ -5,13 +5,12 @@
       device_class: energy
       state_class: measurement
       state: >-
-        {{
+        {{ (
           states('sensor.energy_production_today') | float(0) +
           states('sensor.energy_production_today_2') | float(0) +
           states('sensor.energy_production_today_3') | float(0) +
           states('sensor.energy_production_today_4') | float(0)
-
-        }}
+        ) | round(1) }}
       availability: >-
         {{
           states('sensor.energy_production_today') | is_number and
@@ -27,12 +26,12 @@
       device_class: energy
       state_class: measurement
       state: >-
-        {{
+        {{ (
           states('sensor.energy_production_tomorrow') | float(0) +
           states('sensor.energy_production_tomorrow_2') | float(0) +
           states('sensor.energy_production_tomorrow_3') | float(0) +
           states('sensor.energy_production_tomorrow_4') | float(0)
-        }}
+        ) | round(1) }}
       availability: >-
         {{
           states('sensor.energy_production_tomorrow') | is_number and

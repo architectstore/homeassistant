@@ -1,0 +1,97 @@
+# ============================================================================
+# SAFETY: Grid sensor failsafe - idle the batteries when the Shelly is lost
+#
+# Without a grid reading, no automation can regulate (11), headroom-cap (12/13)
+# or protect (15) anything. The inverters would keep running on the last limits
+# written, so idle them: zero charge AND discharge on both devices.
+#
+# Shelly sensor goes unavailable via `expire_after` in configuration.yaml
+# (60 s of silence). This waits a further 30 s to ignore short blips.
+# Automations 11/12/13 resume by themselves once the reading is back.
+# ============================================================================
+
+- id: solarflow_grid_sensor_failsafe
+  alias: "SolarFlow – Grid sensor lost -> idle batteries"
+  description: >
+    If sensor.shelly_phase_a_power (or its smoothed version) is unavailable /
+    unknown for 30 s, set all SolarFlow input and output limits to 0 and zero
+    the helpers. Re-checked every minute while the sensor stays down, so
+    nothing re-enables the batteries blind.
+  mode: single
+
+  trigger:
+    - platform: state
+      entity_id:
+        - sensor.shelly_phase_a_power
+        - sensor.shelly_phase_a_power_smoothed
+      to:
+        - unavailable
+        - unknown
+      for: "00:00:30"
+      id: lost
+    - platform: time_pattern
+      minutes: "/1"
+      id: recheck
+    - platform: homeassistant
+      event: start
+      id: ha_startup
+
+  condition:
+    - condition: template
+      value_template: >
+        {{ not (has_value('sensor.shelly_phase_a_power')
+                and has_value('sensor.shelly_phase_a_power_smoothed')) }}
+    # On the periodic / startup checks give a fresh restart time to connect
+    - condition: template
+      value_template: >
+        {{ trigger.id == 'lost' or
+           (now() - states.sensor.shelly_phase_a_power.last_changed).total_seconds() > 30 }}
+
+  action:
+    - variables:
+        limits_dirty: >-
+          {{ ['number.solarflow_800_pro_output_limit', 'number.solarflow_800_pro_input_limit',
+              'number.solarflow_800_pro_2_output_limit', 'number.solarflow_800_pro_2_input_limit']
+             | select('has_value') | map('states') | map('float', 0) | select('>', 0) | list | count > 0 }}
+        helpers_dirty: >-
+          {{ states('input_number.solarflow_charge_last') | float(0) != 0
+             or states('input_number.solarflow_discharge_last') | float(0) != 0 }}
+
+    - if:
+        - condition: template
+          value_template: "{{ limits_dirty or helpers_dirty }}"
+      then:
+        - service: number.set_value
+          target:
+            entity_id:
+              - number.solarflow_800_pro_output_limit
+              - number.solarflow_800_pro_input_limit
+              - number.solarflow_800_pro_2_output_limit
+              - number.solarflow_800_pro_2_input_limit
+          data:
+            value: 0
+          continue_on_error: true
+        - service: input_number.set_value
+          target:
+            entity_id:
+              - input_number.solarflow_discharge_last
+              - input_number.solarflow_charge_last
+          data:
+            value: 0
+        - service: system_log.write
+          data:
+            level: warning
+            logger: solarflow_grid_control
+            message: >
+              GRID SENSOR LOST: Shelly unavailable -> SolarFlow limits zeroed
+              (idle) trigger={{ trigger.id }}
+        - if:
+            - condition: template
+              value_template: "{{ trigger.id == 'lost' }}"
+          then:
+            - service: notify.mobile_app_v5
+              data:
+                title: "SolarFlow: Shelly sem dados - baterias em IDLE"
+                message: >-
+                  Leitura da rede indisponível. Carga e descarga postas a 0 W
+                  até o sensor voltar. Hora: {{ now().strftime('%H:%M') }}

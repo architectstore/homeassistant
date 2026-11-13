@@ -3,10 +3,16 @@
   mode: restart
 
   trigger:
+    # Template trigger: also (re)starts the 1-min timer when the EV is plugged
+    # in or enabled while export is already high, not only on a threshold cross.
     - id: start
-      platform: numeric_state
-      entity_id: sensor.shelly_phase_a_power_smoothed
-      below: -2500
+      platform: template
+      value_template: >-
+        {{ has_value('sensor.shelly_phase_a_power_smoothed')
+           and states('sensor.shelly_phase_a_power_smoothed') | float(0) < -2000
+           and is_state('binary_sensor.ev_charger_connectivity', 'on')
+           and is_state('input_boolean.ev_charge_enable', 'on')
+           and is_state('switch.ev_charger', 'off') }}
       for: "00:01:00"
 
     - id: stop
@@ -14,6 +20,16 @@
       entity_id: sensor.shelly_phase_a_power_smoothed
       above: 500
       for: "00:05:00"
+
+    # Battery guard: the start threshold (-2000 W) is below the EV's ~2300 W
+    # draw, so the battery may bridge the gap while the sun ramps up. If the
+    # batteries keep discharging (automation 11's commanded total, which excludes
+    # PV pass-through) for 15 min, the session runs on stored energy -> stop it.
+    - id: battery_drain
+      platform: numeric_state
+      entity_id: input_number.solarflow_discharge_last
+      above: 1200
+      for: "00:15:00"
 
   action:
     - choose:
@@ -37,13 +53,17 @@
               data:
                 value: 10
 
+            - service: input_boolean.turn_on
+              target:
+                entity_id: input_boolean.ev_session_solar
+
             - delay: "00:00:05"
 
             - service: switch.turn_on
               target:
                 entity_id: switch.ev_charger
 
-            - service: notify.mobile_app_mbh_n49
+            - service: notify.mobile_app_v5
               data:
                 title: "EV: Carregamento SOLAR INICIADO"
                 message: >-
@@ -54,7 +74,7 @@
         # STOP only in high tariff period
         - conditions:
             - condition: trigger
-              id: stop
+              id: [stop, battery_drain]
             - condition: state
               entity_id: switch.ev_charger
               state: "on"
@@ -69,7 +89,11 @@
               target:
                 entity_id: switch.ev_charger
 
-            - service: notify.mobile_app_mbh_n49
+            - service: input_boolean.turn_off
+              target:
+                entity_id: input_boolean.ev_session_solar
+
+            - service: notify.mobile_app_v5
               data:
                 title: "EV: Carregamento SOLAR PARADO"
                 message: >-

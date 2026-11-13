@@ -22,6 +22,10 @@ mqtt:
       unit_of_measurement: "W"
       device_class: power
       state_class: measurement
+      # Shelly publishes several times per second; if it goes silent the
+      # sensor (and the smoothed one derived from it) turns unavailable
+      # instead of freezing on the last value.
+      expire_after: 60
 
 input_number: !include helpers/input_number.yaml
 input_boolean: !include helpers/input_boolean.yaml
