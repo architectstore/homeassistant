@@ -31,6 +31,12 @@ input_number: !include helpers/input_number.yaml
 input_boolean: !include helpers/input_boolean.yaml
 input_text: !include helpers/input_text.yaml
 
+# Daily PV generation: resets at local midnight, source is sensors/13_pv_energy.yaml
+utility_meter:
+  pv_energy_daily:
+    source: sensor.pv_energy_total
+    cycle: daily
+
 http:
   use_x_forwarded_for: true
   trusted_proxies:

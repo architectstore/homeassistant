@@ -1,0 +1,9 @@
+# Cumulative PV energy (kWh) integrated from the aggregated PV power.
+# Feeds the daily utility meter defined in configuration.yaml (pv_energy_daily).
+- platform: integration
+  source: sensor.pv_power_total_aggregated
+  name: "PV Energy Total"
+  unique_id: pv_energy_total
+  unit_prefix: k
+  round: 3
+  method: left

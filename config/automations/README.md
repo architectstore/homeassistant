@@ -20,6 +20,7 @@ are managed as a fleet: all power limits are tracked in **total watts** and spli
 | `14_solarflow_health.yaml` | **Active** | Battery health management: sets `soc_charge_max` (90 % normally, 100 % once every 15 days). |
 | `15_solarflow_grid-breaker-guard.yaml` | **Active** | Emergency safety: cuts SolarFlow AC input if grid import sustains above 4400 W for 1 minute. |
 | `16_solarflow_grid-sensor-failsafe.yaml` | **Active** | Failsafe: if the Shelly reading is unavailable for 30 s (MQTT sensor has `expire_after: 60`), zeroes all SolarFlow charge/discharge limits and helpers (idle) and notifies. Re-checks every minute; 11/12/13 resume on their own when the reading returns. |
+| `17_solarflow_offline-alert.yaml` | **Active** | Notifies when either SolarFlow battery's SoC sensor is `unavailable` for 2 min, and again when it comes back. |
 | `20_ev-charge.yaml` | **Active** | Master enable-off stop, plus night-schedule EV charging 22:00–08:00 (13 A) gated on grid headroom. |
 | `21_ev-charge_sun.yaml` | **Active** | Solar-surplus EV charging (10 A): starts on sustained export, stops on sustained import (daytime only). |
 | `30_lights-backyard.yaml` | Active | Backyard light on sun schedule (sunset+30 / sunrise‑60), resyncs on HA start. |

@@ -1,0 +1,67 @@
+# ============================================================================
+# NOTIFY: SolarFlow battery offline / back online
+#
+# Each SolarFlow 800 Pro is watched through its SoC sensor. When that sensor
+# stays `unavailable` for 2 min the battery is considered offline; the alert
+# fires once per battery. When it becomes available again, a "back online"
+# alert fires. Same notify target and tag scheme as 40_zigbee-status.yaml.
+#
+# Note: unavailable only (not unknown). On an HA restart the integration can
+# report unknown before it is ready, so this avoids alerting on every restart.
+# ============================================================================
+
+- id: notify_solarflow_battery_offline
+  alias: "Notify - SolarFlow battery offline"
+  description: Notify phone when a SolarFlow battery stays unavailable for 2 minutes
+  mode: parallel
+
+  trigger:
+    - platform: state
+      entity_id:
+        - sensor.solarflow_800_pro_electric_level
+        - sensor.solarflow_800_pro_2_electric_level
+      to: "unavailable"
+      for:
+        minutes: 2
+
+  condition: []
+
+  action:
+    - service: notify.mobile_app_v5
+      data:
+        title: "SolarFlow battery offline"
+        message: >-
+          {{ trigger.to_state.attributes.friendly_name | default(trigger.entity_id) }}
+          is unavailable ({{ now().strftime('%H:%M') }}).
+        data:
+          tag: "solarflow_offline_{{ trigger.entity_id | replace('.', '_') }}"
+          ttl: 0
+          priority: high
+
+- id: notify_solarflow_battery_back_online
+  alias: "Notify - SolarFlow battery back online"
+  description: Notify phone when a SolarFlow battery becomes available again
+  mode: parallel
+
+  trigger:
+    - platform: state
+      entity_id:
+        - sensor.solarflow_800_pro_electric_level
+        - sensor.solarflow_800_pro_2_electric_level
+      from: "unavailable"
+
+  condition:
+    - condition: template
+      value_template: "{{ trigger.to_state.state not in ['unavailable', 'unknown', ''] }}"
+
+  action:
+    - service: notify.mobile_app_v5
+      data:
+        title: "SolarFlow battery back online"
+        message: >-
+          {{ trigger.to_state.attributes.friendly_name | default(trigger.entity_id) }}
+          is available again at {{ trigger.to_state.state }}% ({{ now().strftime('%H:%M') }}).
+        data:
+          tag: "solarflow_offline_{{ trigger.entity_id | replace('.', '_') }}"
+          ttl: 0
+          priority: high
