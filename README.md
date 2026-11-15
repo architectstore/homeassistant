@@ -40,8 +40,8 @@ Summary of the active pieces:
 
 | File | Status | Purpose |
 |---|---|---|
-| `11_solarflow_day-grid-zero.yaml` | Active | Core grid-zero controller, 07:00–23:00: discharges on import, charges from solar export. |
-| `12_solarflow_night-charge-weather.yaml` | Active | Low-tariff night grid-charge on a low-PV day: idle until 00:30, then charges batteries below the forecast-based target until 08:00, headroom-capped (import ≤ 4100 W). |
+| `11_solarflow_day-grid-zero.yaml` | Active | Core grid-zero controller. Runs 07:00–00:00 and resumes from 00:30–07:00 when the saved 00:30 plan approves high-PV overnight discharge; overnight discharge stops per battery at 40% SoC. |
+| `12_solarflow_night-charge-weather.yaml` | Active | Low-tariff night grid-charge on a low-PV day: idle from 00:00 until the 00:30 plan is saved, then charges batteries below the forecast-based target until 08:00 when the plan does not select overnight discharge. |
 | `14_solaflow_health.yaml` | Active | Sets the SoC charge cap (90 %, or 100 % once every 15 days). |
 | `15_solarflow_grid-breaker-guard.yaml` | Active | Emergency stop: cuts AC charge on both devices if import sustains > 4400 W for 1 minute. |
 

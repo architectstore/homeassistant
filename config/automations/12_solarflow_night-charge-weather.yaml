@@ -7,8 +7,8 @@
 # batteries instead of the grid.
 #
 # Ownership (who may touch the inverters) - complementary with automation 11:
-#   * 12 owns  23:00-07:00 always
-#   * 12 owns  22:00-23:00 and 07:00-08:00 ONLY on a low-PV day
+#   * 12 owns  00:00-07:00 while the saved overnight plan is made at 00:30
+#   * 12 owns  22:00-00:00 and 07:00-08:00 ONLY on a low-PV day
 #              (binary_sensor.solarflow_low_pv_day = on)
 #   * 11 owns  everything else (07:00-23:00 minus the above)
 #
@@ -23,9 +23,10 @@
   alias: "SolarFlow – Low-tariff night charge for low-PV day (per-battery target)"
   description: >
     Charges each battery from the grid during 00:30-08:00 up to the forecast-based
-    target SoC (sensor.solarflow_night_target_soc) when the next day is a low-PV
-    day. Idles 22:00/23:00-00:30. Ramps up gradually and backs off fast when the
-    grid import approaches the contract limit.
+    target SoC (sensor.solarflow_night_target_soc) when the current calendar day
+    is a low-PV day. Idles 00:00-00:30 while the overnight plan is decided.
+    Ramps up gradually and backs off
+    fast when the grid import approaches the contract limit.
   mode: restart
 
   trigger:
@@ -47,12 +48,25 @@
       for: "00:00:20"
       id: soc_change
 
+    # Re-evaluate immediately after the 00:30 forecast refresh updates the
+    # target plan, instead of waiting for the next one-minute tick.
+    - platform: state
+      entity_id:
+        - sensor.solarflow_night_target_soc
+        - binary_sensor.solarflow_low_pv_day
+        - input_boolean.solarflow_overnight_discharge_planned
+        - input_boolean.solarflow_overnight_plan_ready
+      id: plan_update
+
     - platform: time
       at: "22:00:00"
       id: t_2200
     - platform: time
       at: "23:00:00"
       id: t_2300
+    - platform: time
+      at: "00:00:00"
+      id: t_0000
     - platform: time
       at: "00:30:00"
       id: window_start
@@ -93,9 +107,6 @@
         # ---------------- time / ownership ----------------
         t: "{{ now().strftime('%H:%M') }}"
         low_pv_day: "{{ is_state('binary_sensor.solarflow_low_pv_day', 'on') }}"
-        owner: >-
-          {{ (t >= '23:00' or t < '07:00')
-             or ((t >= '22:00' or t < '08:00') and low_pv_day) }}
         in_charge_window: "{{ t >= '00:30' and t < '08:00' }}"
 
         # ---------------- batteries ----------------
@@ -103,6 +114,14 @@
         avail_2: "{{ has_value('sensor.solarflow_800_pro_2_electric_level') }}"
         soc_1: "{{ states('sensor.solarflow_800_pro_electric_level') | float(100) }}"
         soc_2: "{{ states('sensor.solarflow_800_pro_2_electric_level') | float(100) }}"
+        overnight_plan_ready: "{{ is_state('input_boolean.solarflow_overnight_plan_ready', 'on') }}"
+        overnight_discharge_planned: "{{ is_state('input_boolean.solarflow_overnight_discharge_planned', 'on') }}"
+        overnight_decision_window: "{{ t >= '00:30' and t < '07:00' }}"
+        owner: >-
+          {{ ((t >= '00:00' and t < '07:00')
+               or ((t >= '22:00' or t < '08:00') and low_pv_day))
+             and not (t >= '00:30' and t < '07:00'
+                      and overnight_plan_ready and overnight_discharge_planned) }}
         target_ok: "{{ has_value('sensor.solarflow_night_target_soc') }}"
         target_soc: "{{ states('sensor.solarflow_night_target_soc') | float(0) }}"
         planned: "{{ is_state('input_boolean.solarflow_night_charge_planned', 'on') }}"
@@ -112,10 +131,12 @@
         # (Latch on the planned flag, NOT on last_charge, so a breaker-guard cut
         # or an HA restart cannot silently abort the plan.)
         want_1: >-
-          {{ owner and low_pv_day and target_ok and avail_1
+          {{ owner and (not overnight_decision_window or overnight_plan_ready)
+             and low_pv_day and target_ok and avail_1
              and (soc_1 < target_soc - start_hysteresis or (planned and soc_1 < target_soc)) }}
         want_2: >-
-          {{ owner and low_pv_day and target_ok and avail_2
+          {{ owner and (not overnight_decision_window or overnight_plan_ready)
+             and low_pv_day and target_ok and avail_2
              and (soc_2 < target_soc - start_hysteresis or (planned and soc_2 < target_soc)) }}
         want_any: "{{ want_1 or want_2 }}"
         n_want: "{{ (1 if want_1 else 0) + (1 if want_2 else 0) }}"

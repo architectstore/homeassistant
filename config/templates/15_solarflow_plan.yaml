@@ -1,7 +1,8 @@
 # Shared planning signals for automations 11 (day grid-zero) and 12 (night plan).
 #
 # Forecast used = the day the batteries have to cover:
-#   00:00-12:00 -> today's total, 12:00-24:00 -> tomorrow's total.
+#   00:00-12:00 -> today's total (including the 00:30 night-charge decision),
+#   12:00-24:00 -> tomorrow's total for planning only; charging remains blocked.
 # Expected high-tariff consumption is derived from the maximum forecast
 # temperature for that same day. The manual helper is the safe fallback when
 # weather data is unavailable.

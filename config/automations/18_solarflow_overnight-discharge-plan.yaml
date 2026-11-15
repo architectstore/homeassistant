@@ -1,0 +1,87 @@
+# Save one overnight-discharge decision at 00:30 so later forecast revisions
+# cannot change controller ownership before 07:00.
+- id: solarflow_overnight_discharge_plan
+  alias: "SolarFlow – 00:30 overnight discharge plan"
+  description: >
+    At 00:30, uses the current calendar day's fresh PV forecast and battery SoC
+    to decide whether automation 11 should supply overnight load until 07:00.
+  mode: restart
+
+  trigger:
+    - platform: time
+      at: "00:30:00"
+      id: decide
+    - platform: time
+      at: "07:00:00"
+      id: clear
+    - platform: homeassistant
+      event: start
+      id: startup
+
+  action:
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ trigger.id == 'clear' }}"
+          sequence:
+            - action: input_boolean.turn_off
+              target:
+                entity_id:
+                  - input_boolean.solarflow_overnight_discharge_planned
+                  - input_boolean.solarflow_overnight_plan_ready
+
+        - conditions:
+            - condition: template
+              value_template: "{{ trigger.id == 'decide' }}"
+          sequence:
+            - action: input_boolean.turn_off
+              target:
+                entity_id: input_boolean.solarflow_overnight_plan_ready
+            # Lets the 00:30 weather refresh complete before automation 12 can charge.
+            - delay: "00:00:10"
+            - variables:
+                pv_entity: sensor.solar_production_estimate_today_total
+                pv_base: sensor.energy_production_today
+                pv_fresh: >-
+                  {% set ns = namespace(oldest=0, ok=true) %}
+                  {% for entity in [pv_base, pv_base ~ '_2', pv_base ~ '_3', pv_base ~ '_4'] %}
+                    {% set source = states[entity] %}
+                    {% if source is none %}
+                      {% set ns.ok = false %}
+                    {% else %}
+                      {% set age = as_timestamp(now()) - as_timestamp(source.last_reported or source.last_updated) %}
+                      {% set ns.oldest = [ns.oldest, age] | max %}
+                    {% endif %}
+                  {% endfor %}
+                  {{ ns.ok and ns.oldest < 6 * 3600 }}
+                eligible: >-
+                  {{ has_value(pv_entity)
+                     and pv_fresh
+                     and states(pv_entity) | float(0) >= 17
+                     and (states('sensor.solarflow_800_pro_electric_level') | float(0) > 40
+                          or states('sensor.solarflow_800_pro_2_electric_level') | float(0) > 40)
+                     and is_state('input_boolean.solarflow_emergency_charge', 'off')
+                     and has_value('sensor.shelly_phase_a_power') }}
+            - action: "input_boolean.turn_{{ 'on' if eligible else 'off' }}"
+              target:
+                entity_id: input_boolean.solarflow_overnight_discharge_planned
+            - action: input_boolean.turn_on
+              target:
+                entity_id: input_boolean.solarflow_overnight_plan_ready
+
+      default:
+        # Preserve the 00:30 decision after a restart during the active window.
+        - choose:
+            - conditions:
+                - condition: template
+                  value_template: "{{ now().strftime('%H:%M') < '00:30' or now().strftime('%H:%M') >= '07:00' }}"
+              sequence:
+                - action: input_boolean.turn_off
+                  target:
+                    entity_id:
+                      - input_boolean.solarflow_overnight_discharge_planned
+                      - input_boolean.solarflow_overnight_plan_ready
+          default:
+            - action: input_boolean.turn_on
+              target:
+                entity_id: input_boolean.solarflow_overnight_plan_ready

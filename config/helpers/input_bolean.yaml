@@ -3,6 +3,14 @@ solarflow_night_charge_planned:
   icon: mdi:calendar-night
   initial: false
 
+solarflow_overnight_discharge_planned:
+  name: "11 SolarFlow overnight discharge planned"
+  icon: mdi:battery-arrow-down
+
+solarflow_overnight_plan_ready:
+  name: "SolarFlow overnight plan ready"
+  icon: mdi:calendar-check
+
 gate_sentinel:
   name: "Gate Sentinel"
   icon: mdi:shield-home

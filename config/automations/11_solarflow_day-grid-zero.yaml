@@ -1,19 +1,21 @@
 # ============================================================================
-# GRID-ZERO CONTROLLER: Bidirectional discharge/charge (07:00–23:00)
+# GRID-ZERO CONTROLLER: Bidirectional discharge/charge
 # ============================================================================
 #
-# Window: 07:00–23:00 — active grid-zero control with per-battery SoC gates
+# Window: 07:00–00:00, plus 00:30–07:00 when the saved overnight plan is on.
+# The overnight extension discharges only batteries above 40% SoC.
 #   - Can charge on solar export from sunrise onwards
 #   - Can discharge on import while each battery is above its configured floor
-#   - Automation 12 owns 23:00–07:00 always, and 22:00–23:00 / 07:00–08:00 when
+#   - Automation 12 owns 00:00–07:00 except during a saved overnight-discharge
+#     plan, and 22:00–00:00 / 07:00–08:00 when
 #     binary_sensor.solarflow_low_pv_day is ON (cheap tariff, batteries are
 #     being kept/charged for the expensive day) -> this automation does nothing
 #     in those hours then.
 #
 # Discharge floor: solarflow_soc_discharge_min, independently per battery.
 #
-# Evening hold (22:00–23:00): a battery is not discharged when its SoC is
-# under 40% AND tomorrow's PV forecast is under 12 kWh, so it isn't drained
+# Evening hold (22:00–00:00): a battery is not discharged when its SoC is
+# under 40% AND tomorrow's PV forecast is under 10 kWh, so it isn't drained
 # right before a weak-PV day.
 #
 # EV priority: while the EV is connected, enabled, and not yet charging,
@@ -66,6 +68,11 @@
     - platform: time
       at: "22:00:00"
       id: lock_check_2200
+    - platform: state
+      entity_id:
+        - input_boolean.solarflow_overnight_discharge_planned
+        - input_boolean.solarflow_overnight_plan_ready
+      id: overnight_plan_update
     - platform: homeassistant
       event: start
       id: ha_startup
@@ -75,15 +82,23 @@
     - condition: state
       entity_id: input_boolean.solarflow_emergency_charge
       state: "off"
-    - condition: time
-      after: "07:00:00"
-      before: "23:00:00"
+    # Day control runs through midnight. The overnight extension starts only
+    # after the saved 00:30 plan grants it ownership.
+    - condition: template
+      value_template: >
+        {% set t = now().strftime('%H:%M') %}
+        {{ t >= '07:00'
+           or (t >= '00:30' and t < '07:00'
+               and is_state('input_boolean.solarflow_overnight_discharge_planned', 'on')) }}
     # Low-tariff hours (22-08) on a low-PV day belong to automation 12
     - condition: template
       value_template: >
         {% set t = now().strftime('%H:%M') %}
-        {{ not (is_state('binary_sensor.solarflow_low_pv_day', 'on')
-                and (t >= '22:00' or t < '08:00')) }}
+        {% set overnight_planned = t >= '00:30' and t < '07:00'
+                                    and is_state('input_boolean.solarflow_overnight_discharge_planned', 'on') %}
+        {{ overnight_planned
+           or not (is_state('binary_sensor.solarflow_low_pv_day', 'on')
+                   and (t >= '22:00' or t < '08:00')) }}
     - condition: template
       value_template: >
         {{ has_value('sensor.shelly_phase_a_power')
@@ -143,12 +158,19 @@
         #   - tomorrow's PV forecast is under evening_hold_pv_kwh
         # i.e. don't drain a battery that's already low right before a weak-PV
         # day. Treated like the floor below.
-        evening_hold_pv_kwh: 12
+        evening_hold_pv_kwh: 10
         evening_hold_soc: 40
         pv_forecast_tomorrow: "{{ states('sensor.solar_production_estimate_tomorrow_total') | float(999) }}"
         evening_hold: "{{ now().strftime('%H:%M') >= '22:00' and pv_forecast_tomorrow < evening_hold_pv_kwh }}"
-        floor_1: "{{ (not avail_1) or (soc_1 <= soc_discharge_min) or (evening_hold and soc_1 < evening_hold_soc) }}"
-        floor_2: "{{ (not avail_2) or (soc_2 <= soc_discharge_min) or (evening_hold and soc_2 < evening_hold_soc) }}"
+        # From 00:30-07:00, a saved high-PV plan permits discharge, but only
+        # while the individual battery remains above 40% SoC.
+        overnight_discharge_planned: >-
+          {{ now().strftime('%H:%M') >= '00:30'
+             and now().strftime('%H:%M') < '07:00'
+             and is_state('input_boolean.solarflow_overnight_discharge_planned', 'on') }}
+        overnight_discharge_soc_min: 40
+        floor_1: "{{ (not avail_1) or (soc_1 <= soc_discharge_min) or (evening_hold and soc_1 < evening_hold_soc) or (overnight_discharge_planned and soc_1 <= overnight_discharge_soc_min) }}"
+        floor_2: "{{ (not avail_2) or (soc_2 <= soc_discharge_min) or (evening_hold and soc_2 < evening_hold_soc) or (overnight_discharge_planned and soc_2 <= overnight_discharge_soc_min) }}"
         n_avail: "{{ (0 if floor_1 else 1) + (0 if floor_2 else 1) }}"
         dis_limit: "{{ [max_discharge, per_device_max * n_avail] | min }}"
         # Per-battery charge ceiling (mirrors the discharge floors): a battery at

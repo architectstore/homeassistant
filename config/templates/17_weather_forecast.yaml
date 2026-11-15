@@ -3,6 +3,10 @@
 - trigger:
     - trigger: time_pattern
       hours: "/1"
+    # Refresh when the night-charge window opens, so forecast entry [0] is
+    # available for the current calendar day's charging decision.
+    - trigger: time
+      at: "00:30:00"
     - trigger: homeassistant
       event: start
   action:
