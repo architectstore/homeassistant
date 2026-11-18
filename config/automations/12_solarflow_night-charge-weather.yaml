@@ -7,24 +7,24 @@
 # batteries instead of the grid.
 #
 # Ownership (who may touch the inverters) - complementary with automation 11:
-#   * 12 owns  00:00-07:00 while the saved overnight plan is made at 00:30
-#   * 12 owns  22:00-00:00 and 07:00-08:00 ONLY on a low-PV day
-#              (binary_sensor.solarflow_low_pv_day = on)
-#   * 11 owns  everything else (07:00-23:00 minus the above)
+#   * 12 owns charging from 22:00-08:00 only when the 22:00 decision saved a
+#     night-charge plan.
+#   * After the 22:00 decision, auto 11 either discharges until midnight, or
+#     continues through 07:00 if the overnight-discharge plan was saved.
 #
 # Within 12's ownership:
-#   - before 00:30 : idle (no charge, no discharge)
-#   - 00:30-08:00  : charge each battery that is below target, headroom-capped
-#                    and ramped; stop each battery when it reaches the target
-#   - at 07:00 / 08:00 when handing back to 11: zero limits + helpers
+#   - 22:00-08:00  : if selected at 22:00, charge each battery below target,
+#                    headroom-capped and ramped
+#   - at 08:00: clear the saved charge plan and hand back to 11
 # ============================================================================
 
 - id: solarflow_night_charge_low_pv_forecast
   alias: "SolarFlow – Low-tariff night charge for low-PV day (per-battery target)"
   description: >
-    Charges each battery from the grid during 00:30-08:00 up to the forecast-based
-    target SoC (sensor.solarflow_night_target_soc) when the current calendar day
-    is a low-PV day. Idles 00:00-00:30 while the overnight plan is decided.
+    Decides at 22:00 whether to charge against the next-day forecast, then charges
+    each battery below the forecast-based target SoC (sensor.solarflow_night_target_soc)
+    from 22:00-08:00 when the next day is a low-PV day. The saved decision keeps
+    automation 11 from discharging during the same night.
     Ramps up gradually and backs off
     fast when the grid import approaches the contract limit.
   mode: restart
@@ -48,28 +48,17 @@
       for: "00:00:20"
       id: soc_change
 
-    # Re-evaluate immediately after the 00:30 forecast refresh updates the
-    # target plan, instead of waiting for the next one-minute tick.
+    # Re-evaluate immediately when the forecast plan changes.
     - platform: state
       entity_id:
         - sensor.solarflow_night_target_soc
         - binary_sensor.solarflow_low_pv_day
-        - input_boolean.solarflow_overnight_discharge_planned
         - input_boolean.solarflow_overnight_plan_ready
       id: plan_update
 
     - platform: time
       at: "22:00:00"
       id: t_2200
-    - platform: time
-      at: "23:00:00"
-      id: t_2300
-    - platform: time
-      at: "00:00:00"
-      id: t_0000
-    - platform: time
-      at: "00:30:00"
-      id: window_start
     - platform: time
       at: "07:00:00"
       id: t_0700
@@ -107,7 +96,7 @@
         # ---------------- time / ownership ----------------
         t: "{{ now().strftime('%H:%M') }}"
         low_pv_day: "{{ is_state('binary_sensor.solarflow_low_pv_day', 'on') }}"
-        in_charge_window: "{{ t >= '00:30' and t < '08:00' }}"
+        in_charge_window: "{{ t >= '22:00' or t < '08:00' }}"
 
         # ---------------- batteries ----------------
         avail_1: "{{ has_value('sensor.solarflow_800_pro_electric_level') }}"
@@ -115,28 +104,27 @@
         soc_1: "{{ states('sensor.solarflow_800_pro_electric_level') | float(100) }}"
         soc_2: "{{ states('sensor.solarflow_800_pro_2_electric_level') | float(100) }}"
         overnight_plan_ready: "{{ is_state('input_boolean.solarflow_overnight_plan_ready', 'on') }}"
-        overnight_discharge_planned: "{{ is_state('input_boolean.solarflow_overnight_discharge_planned', 'on') }}"
-        overnight_decision_window: "{{ t >= '00:30' and t < '07:00' }}"
+        planned: "{{ is_state('input_boolean.solarflow_night_charge_planned', 'on') }}"
+        decision_pending: "{{ not overnight_plan_ready and (t >= '22:00' or t < '08:00') }}"
         owner: >-
-          {{ ((t >= '00:00' and t < '07:00')
-               or ((t >= '22:00' or t < '08:00') and low_pv_day))
-             and not (t >= '00:30' and t < '07:00'
-                      and overnight_plan_ready and overnight_discharge_planned) }}
+          {{ (planned and ((t >= '22:00' or t < '08:00')
+                           or trigger.id == 't_0800'
+                           or (trigger.id == 'ha_startup' and t >= '08:00')))
+             or ((t >= '22:00' or t < '08:00') and low_pv_day and decision_pending) }}
         target_ok: "{{ has_value('sensor.solarflow_night_target_soc') }}"
         target_soc: "{{ states('sensor.solarflow_night_target_soc') | float(0) }}"
-        planned: "{{ is_state('input_boolean.solarflow_night_charge_planned', 'on') }}"
 
         # A battery wants charge if clearly below target, or if the plan is
         # already latched on and it has not reached the target yet.
         # (Latch on the planned flag, NOT on last_charge, so a breaker-guard cut
         # or an HA restart cannot silently abort the plan.)
         want_1: >-
-          {{ owner and (not overnight_decision_window or overnight_plan_ready)
-             and low_pv_day and target_ok and avail_1
+          {{ owner and (decision_pending or planned)
+             and (low_pv_day or planned) and target_ok and avail_1
              and (soc_1 < target_soc - start_hysteresis or (planned and soc_1 < target_soc)) }}
         want_2: >-
-          {{ owner and (not overnight_decision_window or overnight_plan_ready)
-             and low_pv_day and target_ok and avail_2
+          {{ owner and (decision_pending or planned)
+             and (low_pv_day or planned) and target_ok and avail_2
              and (soc_2 < target_soc - start_hysteresis or (planned and soc_2 < target_soc)) }}
         want_any: "{{ want_1 or want_2 }}"
         n_want: "{{ (1 if want_1 else 0) + (1 if want_2 else 0) }}"
@@ -170,44 +158,48 @@
         total_applied: "{{ c1 + c2 }}"
 
     # ------------------------------------------------------------------
-    # Keep the plan flag in sync (informational + latch for hysteresis).
-    # Only meaningful during the low-tariff period.
+    # Keep a selected charge plan on through 08:00, even after reaching target,
+    # so auto 11 cannot restart discharge later in the night.
     # ------------------------------------------------------------------
-    - service: "input_boolean.turn_{{ 'on' if want_any else 'off' }}"
-      target:
-        entity_id: input_boolean.solarflow_night_charge_planned
+    - if:
+        - condition: template
+          value_template: >-
+            {{ not (planned and (trigger.id == 't_0800'
+                                  or (trigger.id == 'ha_startup' and t >= '08:00'))) }}
+      then:
+        - service: "input_boolean.turn_{{ 'on' if want_any or (planned and t < '08:00') else 'off' }}"
+          target:
+            entity_id: input_boolean.solarflow_night_charge_planned
 
     - choose:
-        # 0) Hand-over back to automation 11 (07:00 / 08:00): clean slate
+        # 0) Cleanly hand control to automation 11 after the charge window.
         - conditions:
             - condition: template
-              value_template: "{{ trigger.id in ['t_0700', 't_0800'] and not owner }}"
+              value_template: >-
+                {{ planned and (trigger.id == 't_0800'
+                                or (trigger.id == 'ha_startup' and t >= '08:00')) }}
           sequence:
+            - service: number.set_value
+              target:
+                entity_id:
+                  - number.solarflow_800_pro_output_limit
+                  - number.solarflow_800_pro_input_limit
+                  - number.solarflow_800_pro_2_output_limit
+                  - number.solarflow_800_pro_2_input_limit
+              data:
+                value: 0
+              continue_on_error: true
+            - service: input_number.set_value
+              target:
+                entity_id:
+                  - input_number.solarflow_discharge_last
+                  - input_number.solarflow_charge_last
+              data:
+                value: 0
             - service: input_boolean.turn_off
               target:
                 entity_id: input_boolean.solarflow_night_charge_planned
-            - if:
-                - condition: template
-                  value_template: "{{ last_charge != 0 or last_discharge != 0 or limits_dirty }}"
-              then:
-                - service: number.set_value
-                  target:
-                    entity_id:
-                      - number.solarflow_800_pro_output_limit
-                      - number.solarflow_800_pro_input_limit
-                      - number.solarflow_800_pro_2_output_limit
-                      - number.solarflow_800_pro_2_input_limit
-                  data:
-                    value: 0
-                  continue_on_error: true
-                - service: input_number.set_value
-                  target:
-                    entity_id:
-                      - input_number.solarflow_discharge_last
-                      - input_number.solarflow_charge_last
-                  data:
-                    value: 0
-            - stop: "Hand-over to automation 11"
+            - stop: "Night charge handed off to automation 11"
 
         # 1) Not ours: automation 11 is in charge
         - conditions:
@@ -216,7 +208,7 @@
           sequence:
             - stop: "Automation 11 owns this period"
 
-        # 2) Ours but before 00:30: idle both directions
+        # 2) Ours but outside the 22:00-08:00 charge window: idle both directions
         - conditions:
             - condition: template
               value_template: "{{ not in_charge_window }}"
@@ -242,9 +234,16 @@
                       - input_number.solarflow_charge_last
                   data:
                     value: 0
-            - stop: "Idle until 00:30"
+            - stop: "Outside the 22:00-08:00 charge window"
 
-        # 3) Charge the batteries that are below target
+        # 3) No charge was selected at 22:00: leave automation 11's limits alone.
+        - conditions:
+            - condition: template
+              value_template: "{{ not want_any and not planned }}"
+          sequence:
+            - stop: "No night charge selected"
+
+        # 4) Charge the batteries that are below target
         - conditions:
             - condition: template
               value_template: "{{ want_any and grid_valid and total_applied >= min_charge }}"

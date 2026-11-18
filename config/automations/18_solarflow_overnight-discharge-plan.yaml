@@ -1,28 +1,39 @@
-# Save one overnight-discharge decision at 00:30 so later forecast revisions
-# cannot change controller ownership before 07:00.
+# Make the overnight operating decision at 22:00 using the next day's forecast.
+# A night-charge plan from automation 12 takes priority; otherwise a fresh
+# forecast of at least 17 kWh can extend automation 11's discharge through 07:00.
 - id: solarflow_overnight_discharge_plan
-  alias: "SolarFlow – 00:30 overnight discharge plan"
+  alias: "SolarFlow – 22:00 overnight operating plan"
   description: >
-    At 00:30, uses the current calendar day's fresh PV forecast and battery SoC
-    to decide whether automation 11 should supply overnight load until 07:00.
+    At 22:00, after automation 12 has had time to save any night-charge plan,
+    uses tomorrow's fresh PV forecast and battery SoC to decide whether
+    automation 11 should discharge overnight until 07:00. The saved decision
+    remains in effect until the 08:00 handoff.
   mode: restart
 
   trigger:
     - platform: time
-      at: "00:30:00"
+      at: "22:00:00"
       id: decide
     - platform: time
-      at: "07:00:00"
+      at: "08:00:00"
       id: clear
     - platform: homeassistant
       event: start
       id: startup
 
   action:
+    - variables:
+        t: "{{ now().strftime('%H:%M') }}"
+        plan_ready: "{{ is_state('input_boolean.solarflow_overnight_plan_ready', 'on') }}"
+        decision_window: "{{ t >= '22:00' or t < '08:00' }}"
+        decision_pending: "{{ decision_window and not plan_ready }}"
+
     - choose:
         - conditions:
             - condition: template
-              value_template: "{{ trigger.id == 'clear' }}"
+              value_template: >-
+                {{ trigger.id == 'clear'
+                   or (trigger.id == 'startup' and not decision_window) }}
           sequence:
             - action: input_boolean.turn_off
               target:
@@ -32,16 +43,20 @@
 
         - conditions:
             - condition: template
-              value_template: "{{ trigger.id == 'decide' }}"
+              value_template: >-
+                {{ trigger.id == 'decide'
+                   or (trigger.id == 'startup' and decision_pending) }}
           sequence:
             - action: input_boolean.turn_off
               target:
-                entity_id: input_boolean.solarflow_overnight_plan_ready
-            # Lets the 00:30 weather refresh complete before automation 12 can charge.
+                entity_id:
+                  - input_boolean.solarflow_overnight_discharge_planned
+                  - input_boolean.solarflow_overnight_plan_ready
+            # Give automation 12 time to save its higher-priority charge choice.
             - delay: "00:00:10"
             - variables:
-                pv_entity: sensor.solar_production_estimate_today_total
-                pv_base: sensor.energy_production_today
+                pv_entity: sensor.solar_production_estimate_tomorrow_total
+                pv_base: sensor.energy_production_tomorrow
                 pv_fresh: >-
                   {% set ns = namespace(oldest=0, ok=true) %}
                   {% for entity in [pv_base, pv_base ~ '_2', pv_base ~ '_3', pv_base ~ '_4'] %}
@@ -60,6 +75,7 @@
                      and states(pv_entity) | float(0) >= 17
                      and (states('sensor.solarflow_800_pro_electric_level') | float(0) > 40
                           or states('sensor.solarflow_800_pro_2_electric_level') | float(0) > 40)
+                     and is_state('input_boolean.solarflow_night_charge_planned', 'off')
                      and is_state('input_boolean.solarflow_emergency_charge', 'off')
                      and has_value('sensor.shelly_phase_a_power') }}
             - action: "input_boolean.turn_{{ 'on' if eligible else 'off' }}"
@@ -70,18 +86,5 @@
                 entity_id: input_boolean.solarflow_overnight_plan_ready
 
       default:
-        # Preserve the 00:30 decision after a restart during the active window.
-        - choose:
-            - conditions:
-                - condition: template
-                  value_template: "{{ now().strftime('%H:%M') < '00:30' or now().strftime('%H:%M') >= '07:00' }}"
-              sequence:
-                - action: input_boolean.turn_off
-                  target:
-                    entity_id:
-                      - input_boolean.solarflow_overnight_discharge_planned
-                      - input_boolean.solarflow_overnight_plan_ready
-          default:
-            - action: input_boolean.turn_on
-              target:
-                entity_id: input_boolean.solarflow_overnight_plan_ready
+        # Preserve the saved 22:00 decision after a restart during the night.
+        - stop: "Overnight decision already saved"

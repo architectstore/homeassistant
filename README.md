@@ -40,8 +40,8 @@ Summary of the active pieces:
 
 | File | Status | Purpose |
 |---|---|---|
-| `11_solarflow_day-grid-zero.yaml` | Active | Core grid-zero controller. Runs 07:00–00:00 and resumes from 00:30–07:00 when the saved 00:30 plan approves high-PV overnight discharge; overnight discharge stops per battery at 40% SoC. |
-| `12_solarflow_night-charge-weather.yaml` | Active | Low-tariff night grid-charge on a low-PV day: idle from 00:00 until the 00:30 plan is saved, then charges batteries below the forecast-based target until 08:00 when the plan does not select overnight discharge. |
+| `11_solarflow_day-grid-zero.yaml` | Active | Core grid-zero controller. Runs 07:00–00:00 and continues overnight until 07:00 when the 22:00 plan selects high-PV discharge; overnight discharge stops per battery at 40% SoC. |
+| `12_solarflow_night-charge-weather.yaml` | Active | At 22:00, decides from the next-day forecast whether to charge during the low tariff. If selected, it charges batteries below the forecast-based target until 08:00, and auto 11 does not discharge that night. |
 | `14_solaflow_health.yaml` | Active | Sets the SoC charge cap (90 %, or 100 % once every 15 days). |
 | `15_solarflow_grid-breaker-guard.yaml` | Active | Emergency stop: cuts AC charge on both devices if import sustains > 4400 W for 1 minute. |
 
@@ -106,9 +106,11 @@ and `number.ev_charger_charging_current`.
   the primary signal for every SolarFlow and EV automation.
 - **`sensors/12_ecoflow_total.yaml`** + **`templates/12_ecoflow.yaml`** —
   sums two microinverter AC power sensors and integrates to an energy sensor.
-- **`templates/11_solar.yaml`** — aggregates four `energy_production_today*`
-  forecast sensors into `sensor.solar_production_estimate_today_total`, and
-  combines Solax/microinverter/SolarFlow instantaneous power into
+- **`templates/11_solar.yaml`** — captures the next-day forecast in
+  `sensor.solar_production_estimate_today_total` at 22:00 for next-day accuracy
+  checks, keeps a live current-day aggregate in
+  `sensor.solar_production_estimate_today_live_total` for automation decisions,
+  and combines Solax/microinverter/SolarFlow instantaneous power into
   `sensor.pv_power_total_aggregated`.
 - **`templates/13_grid_safety.yaml`** — `binary_sensor.grid_low_safe_for_ev`
   (< 2000 W) and `binary_sensor.grid_high_alert_ev` (> 4900 W), gating the EV

@@ -1,8 +1,9 @@
 # Shared planning signals for automations 11 (day grid-zero) and 12 (night plan).
 #
 # Forecast used = the day the batteries have to cover:
-#   00:00-12:00 -> today's total (including the 00:30 night-charge decision),
-#   12:00-24:00 -> tomorrow's total for planning only; charging remains blocked.
+#   00:00-11:59 -> tomorrow's total so the overnight plan stays stable,
+#   22:00-23:59 -> tomorrow's total for the overnight charge decision,
+#   12:00-21:59 -> today's total.
 # Expected high-tariff consumption is derived from the maximum forecast
 # temperature for that same day. The manual helper is the safe fallback when
 # weather data is unavailable.
@@ -19,13 +20,13 @@
       icon: mdi:home-thermometer
       availability: >-
         {% set weather_entity = 'sensor.today_weather_forecast'
-                                if now().hour < 12 else
+                                if now().hour >= 12 and now().hour < 22 else
                                 'sensor.tomorrow_weather_forecast' %}
         {{ is_number(state_attr(weather_entity, 'temperature'))
            or is_number(states('input_number.solarflow_daily_consumption_kwh')) }}
       state: >-
         {% set weather_entity = 'sensor.today_weather_forecast'
-                                if now().hour < 12 else
+                                if now().hour >= 12 and now().hour < 22 else
                                 'sensor.tomorrow_weather_forecast' %}
         {% set temperature = state_attr(weather_entity, 'temperature') %}
         {% if is_number(temperature) %}
@@ -37,16 +38,16 @@
       attributes:
         forecast_temperature: >-
           {% set weather_entity = 'sensor.today_weather_forecast'
-                                  if now().hour < 12 else
+                                  if now().hour >= 12 and now().hour < 22 else
                                   'sensor.tomorrow_weather_forecast' %}
           {{ state_attr(weather_entity, 'temperature') }}
-        forecast_day: "{{ 'today' if now().hour < 12 else 'tomorrow' }}"
+        forecast_day: "{{ 'tomorrow' if now().hour >= 22 or now().hour < 12 else 'today' }}"
         source_entity: >-
-          {{ 'sensor.today_weather_forecast' if now().hour < 12 else
+          {{ 'sensor.today_weather_forecast' if now().hour >= 12 and now().hour < 22 else
              'sensor.tomorrow_weather_forecast' }}
         source: >-
           {% set weather_entity = 'sensor.today_weather_forecast'
-                                  if now().hour < 12 else
+                                if now().hour >= 12 and now().hour < 22 else
                                   'sensor.tomorrow_weather_forecast' %}
           {{ 'weather' if is_number(state_attr(weather_entity, 'temperature'))
              else 'manual_fallback' }}
@@ -61,11 +62,11 @@
            (bumps on every integration refresh, even when the value is unchanged).
            last_updated on the derived total only moves when the value changes,
            so it would wrongly expire on a stable overnight forecast. #}
-        {% set fc_entity = 'sensor.solar_production_estimate_today_total'
-                           if now().hour < 12 else
+        {% set fc_entity = 'sensor.solar_production_estimate_today_live_total'
+                           if now().hour >= 12 and now().hour < 22 else
                            'sensor.solar_production_estimate_tomorrow_total' %}
         {% set base = 'sensor.energy_production_today'
-                      if now().hour < 12 else
+                      if now().hour >= 12 and now().hour < 22 else
                       'sensor.energy_production_tomorrow' %}
         {% set srcs = [base, base ~ '_2', base ~ '_3', base ~ '_4'] %}
         {# Oldest of the four sources decides: one stalled source is enough
@@ -84,8 +85,8 @@
         {{ is_number(states(fc_entity)) and fc_fresh
            and is_number(states('sensor.solarflow_planned_high_tariff_consumption_kwh')) }}
       state: >-
-        {% set fc = states('sensor.solar_production_estimate_today_total'
-                           if now().hour < 12 else
+        {% set fc = states('sensor.solar_production_estimate_today_live_total'
+                           if now().hour >= 12 and now().hour < 22 else
                            'sensor.solar_production_estimate_tomorrow_total') | float(0) %}
         {% set use = states('sensor.solarflow_planned_high_tariff_consumption_kwh') | float(5) %}
         {% set floor = states('input_number.solarflow_soc_discharge_min') | float(25) %}

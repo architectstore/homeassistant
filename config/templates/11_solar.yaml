@@ -1,6 +1,22 @@
-- sensor:
+- trigger:
+    - platform: time
+      at: "22:00:00"
+  sensor:
     - name: "Solar production estimate today (total)"
       unique_id: solar_production_estimate_today_total
+      unit_of_measurement: "kWh"
+      device_class: energy
+      state_class: measurement
+      state: "{{ states('sensor.solar_production_estimate_tomorrow_total') }}"
+      availability: "{{ is_number(states('sensor.solar_production_estimate_tomorrow_total')) }}"
+      attributes:
+        forecast_source: sensor.solar_production_estimate_tomorrow_total
+        forecast_for: tomorrow
+        captured_at: "{{ now().isoformat() }}"
+
+- sensor:
+    - name: "Solar production estimate today live (total)"
+      unique_id: solar_production_estimate_today_live_total
       unit_of_measurement: "kWh"
       device_class: energy
       state_class: measurement

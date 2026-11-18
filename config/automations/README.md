@@ -14,9 +14,9 @@ are managed as a fleet: all power limits are tracked in **total watts** and spli
 |------|--------|-------------|
 | `00_garage_trigger.yaml` | Active | Notifies if the garage gate is open with no garage motion for 30 min. |
 | `01_garage_water.yaml` | Active | Notifies immediately on a garage water-leak detection. |
-| `11_solarflow_day-grid-zero.yaml` | **Active** | Core grid-zero controller. Runs 07:00–00:00 and resumes from 00:30–07:00 when the saved high-PV plan is on; discharges on import, charges on export. Reserves export headroom for the EV before charging the battery. |
-| `12_solarflow_night-charge-weather.yaml` | **Active** | Low-tariff night grid-charge on a low-PV day: idles from 00:00 until the 00:30 plan is saved, then charges each battery below its forecast-based target until 08:00 when the plan does not select overnight discharge. Power is headroom-capped to keep import ≤ 4100 W and ramps gradually toward that target. |
-| `18_solarflow_overnight-discharge-plan.yaml` | **Active** | Saves the 00:30 high-PV overnight-discharge decision through 07:00, so later forecast updates cannot change controller ownership. |
+| `11_solarflow_day-grid-zero.yaml` | **Active** | Core grid-zero controller. Runs 07:00–00:00; follows the 22:00 plan to either idle after midnight or continue discharging through 07:00. A night-charge plan takes priority. |
+| `12_solarflow_night-charge-weather.yaml` | **Active** | At 22:00, decides from the next-day forecast whether low-tariff grid charging is needed. If so, starts immediately and charges each battery below its forecast-based target until 08:00. Auto 11 stands down for that night. |
+| `18_solarflow_overnight-discharge-plan.yaml` | **Active** | At 22:00, after auto 12 has had time to save a charge plan, saves whether high-PV forecast and SoC allow overnight discharge through 07:00. The decision remains fixed until 08:00. |
 | `13_solarflow_emergency-charge.yaml` | **Active** | Manual override: while `input_boolean.solarflow_emergency_charge` is on, charges both batteries to 100 % with the same headroom/ramp logic as 12 (4100 W grid ceiling). Automations 11 and 12 are blocked while it is on. Toggle auto-switches off once all batteries are full, or after a 6 h timeout (with a notification). |
 | `14_solarflow_health.yaml` | **Active** | Battery health management: sets `soc_charge_max` (90 % normally, 100 % once every 15 days). |
 | `15_solarflow_grid-breaker-guard.yaml` | **Active** | Emergency safety: cuts SolarFlow AC input if grid import sustains above 4400 W for 1 minute. |
@@ -73,12 +73,11 @@ reading; negative = export, positive = import):
 
 ### 11 — Grid-Zero Controller (active)
 
-**Window**: 07:00 → 00:00. It may also run from 00:30 → 07:00 when the saved
-00:30 plan is on. That plan requires a fresh current-day PV forecast of at
-least 17 kWh and at least one battery above 40% SoC. During this extension,
-each battery stops discharging at 40% SoC. During low-tariff hours, it otherwise
-stands down whenever `binary_sensor.solarflow_low_pv_day` is on, because auto
-12 owns those hours.
+**Window**: 07:00 → 00:00. At 22:00, automation 18 can save a plan that
+extends discharge through 07:00. It requires a fresh next-day PV forecast of
+at least 17 kWh and at least one battery above 40% SoC. During the overnight
+extension, each battery stops discharging at 40% SoC. A charge plan from auto
+12 takes priority and keeps auto 11 out through 08:00.
 
 **Control law (rewritten)**: one signed battery command `p` (+ discharge,
 − charge) is moved each cycle by `gain × (grid − target_import)` from the
@@ -97,9 +96,9 @@ into the loop and causing the oscillation).
   battery's share goes to the other.
 - **Evening hold (from 22:00)**: a battery under 40 % SoC is not discharged
   when tomorrow's PV forecast is under 10 kWh (treated like the floor).
-- **High-PV overnight discharge**: at 00:30, a fresh current-day PV forecast
-  of at least 17 kWh and an available battery above 40 % SoC save a decision
-  for auto 11 to supply load until 07:00. Each battery stops at 40 % SoC.
+- **High-PV overnight discharge**: at 22:00, a fresh next-day PV forecast of
+  at least 17 kWh and an available battery above 40 % SoC save a decision for
+  auto 11 to supply load until 07:00. Each battery stops at 40 % SoC.
 - **Offline / full batteries**: a device without a readable SoC or limits is
   skipped (never assumed to be at 50 %); a battery at `soc_charge_max` stops
   charging while the other continues.
@@ -120,43 +119,52 @@ threshold (the 300 W margin keeps the grid clearly below it) instead of the batt
 starts drawing, the cap lifts and the battery is free to use any leftover
 surplus.
 
-**Night**: auto 11 continues its evening policy through midnight. Auto 12
-idles the batteries from 00:00 to 00:30 while the plan is created. A saved
-high-PV plan gives control back to auto 11 until 07:00; otherwise auto 12
-uses its normal low-PV charging logic.
+**Night**: at 22:00 auto 12 evaluates the next-day forecast and starts charging
+immediately if its existing low-PV/target conditions require it. After a short
+handoff delay, auto 18 saves the overnight-discharge choice from the same
+next-day forecast, but only when auto 12 did not plan to charge. If neither
+plan is selected, auto 11 discharges until midnight and then idles. The
+planning sensors use tomorrow's PV and temperature forecasts from 22:00 through
+11:59, keeping the night decision stable across midnight.
 
 ---
 
 ### 12 — Low-tariff night charge (active)
 
-**Purpose**: on a low-PV day, fill each battery during the low tariff
-(22:00–08:00) to a forecast-based target so the high-tariff day is served by
-the batteries.
+**Purpose**: decide at 22:00, using the next day's PV and temperature forecasts,
+whether to fill each battery during the low tariff (22:00–08:00) to a
+forecast-based target so the high-tariff day is served by the batteries.
 
 **Shared signals** (`templates/15_solarflow_plan.yaml`):
 - `sensor.solarflow_night_target_soc` = floor + (daily consumption − 60 % of the
-  PV forecast) / 7.68 kWh, clamped to floor..`soc_charge_max`. Forecast = today's
-  total before 12:00, tomorrow's after.
+  PV forecast) / 7.68 kWh, clamped to floor..`soc_charge_max`. Forecast = live
+  today's total from 12:00–21:59, tomorrow's total from 22:00–11:59.
 - `binary_sensor.solarflow_low_pv_day` = target > floor + 10 %.
 - `sensor.solarflow_planned_high_tariff_consumption_kwh` selects the maximum
   forecast temperature for the same planning day: ≥18 °C = 4 kWh, ≥16 °C =
-  6 kWh, ≥14 °C = 7 kWh, and <14 °C = 10 kWh. It uses today's forecast before
-  12:00 and tomorrow's forecast afterwards.
+  6 kWh, ≥14 °C = 7 kWh, and <14 °C = 10 kWh. It uses tomorrow's forecast
+  from 22:00–11:59 and today's from 12:00–21:59.
 - `input_number.solarflow_daily_consumption_kwh` remains the manual fallback
   when the selected weather forecast has no numeric maximum temperature.
 
-**Ownership with auto 11**: 12 owns 00:00–07:00 while the 00:30 decision is
-made. A saved high-PV plan gives ownership to auto 11 from 00:30–07:00. It
-owns 22:00–00:00 / 07:00–08:00 only when `low_pv_day` is on. On a low-PV day
-the batteries are therefore not discharged during cheap hours.
+For forecast accuracy checks, `sensor.solar_production_estimate_today_total`
+captures `sensor.solar_production_estimate_tomorrow_total` at 22:00 and retains
+that reading, with a `captured_at` timestamp, until the next 22:00 snapshot.
+Live current-day decisions use `sensor.solar_production_estimate_today_live_total`.
 
-**Behaviour**: idle until 00:30 (limits zeroed once); then, until 08:00,
-each battery below target (start hysteresis 8 %, latched by
+**Ownership with auto 11**: 12 acts on its 22:00 charge decision and owns the
+inverters through 08:00 only if it saved a charge plan. Otherwise it stays out
+after the 22:00 planning handoff. Auto 11 continues until midnight when no
+charge plan is saved, and extends through 07:00 when auto 18 selects
+high-PV overnight discharge.
+
+**Behaviour**: at 22:00, each battery below target (start hysteresis 8 %, latched by
 `solarflow_night_charge_planned`) is charged,
 split per battery, max 2000 W total / 1000 W per device. Charge power =
 `last_charge + (4100 − grid)` capped, ramp +500 / −1000 W per tick (the grid
-reading already contains the charge, so headroom is added to it). At the
-07:00 / 08:00 hand-over, limits and helpers are zeroed.
+reading already contains the charge, so headroom is added to it). The saved
+plan continues to use tomorrow's forecast across midnight. At the 08:00
+hand-over, limits and helpers are zeroed.
 
 The old helpers `solarflow_pv_threshold_kwh`, `solarflow_low_pv_soc_limit` and
 `solarflow_evening_soc_min` (plus `solarflow_min_delta`, `solarflow_deadband`)
@@ -246,9 +254,9 @@ This file has **two** automations:
 | `input_number.solarflow_soc_discharge_min` | 25 | Configurable minimum SoC floor for discharge, set directly in the helper |
 | `input_number.solarflow_soc_charge_max` | 100 | Max SoC for solar charge absorption (managed by auto 14) |
 | `input_number.solarflow_daily_consumption_kwh` | 5 | Manual fallback consumption when the selected weather forecast has no numeric maximum temperature |
-| `input_boolean.solarflow_night_charge_planned` | off | Latch flag used only by auto 12 (keeps a started night charge from aborting on a restart) |
-| `input_boolean.solarflow_overnight_discharge_planned` | off | Saved 00:30 decision that grants auto 11 overnight discharge until 07:00 |
-| `input_boolean.solarflow_overnight_plan_ready` | off | Prevents auto 12 from charging until the 00:30 decision has completed |
+| `input_boolean.solarflow_night_charge_planned` | off | Saved 22:00 night-charge decision; keeps auto 12 charging and auto 11 from discharging through the night |
+| `input_boolean.solarflow_overnight_discharge_planned` | off | Saved 22:00 decision that grants auto 11 overnight discharge until 07:00 |
+| `input_boolean.solarflow_overnight_plan_ready` | off | Marks the 22:00 charge/discharge decision complete until 08:00 |
 | `input_boolean.ev_charge_enable` | — | Master EV charging kill switch, read by autos 20 and 21 |
 | `input_boolean.ev_session_solar` | off | Set by auto 21 when it starts a solar session; makes auto 20's 08:00 stop skip it |
 
@@ -258,9 +266,11 @@ This file has **two** automations:
 
 - **Check traces**: Developer Tools → Traces → `solarflow_day_grid_zero_step_100w`
   for IDLE / branch-taken reasons.
-- **00:00 handoff**: auto 11 continues to midnight, then auto 12 idles both
-  batteries until the 00:30 decision is ready. A saved ≥17 kWh plan starts
-  auto 11's overnight discharge extension; otherwise auto 12 evaluates charge.
+- **Night plan handoff**: the night policy is decided at 22:00 from tomorrow's
+  forecast. A night-charge plan starts charging then and keeps auto 11 from
+  discharging through 08:00. If no charge is needed, a fresh ≥17 kWh forecast
+  can let auto 11 discharge through 07:00; otherwise it discharges only until
+  midnight, then idles.
 - **EV + SolarFlow overlap (daytime, export)**: automation 11 reserves 2300 W
   of export for the EV before charging the battery (see "EV export priority"
   above), so the battery no longer races the EV for solar surplus.
@@ -276,9 +286,10 @@ This file has **two** automations:
 - **Device 2 offline**: autos 11, 12 and 13 skip the unavailable device and run
   on the other one alone. Service calls use `continue_on_error: true` so the
   controllers keep running.
-- **`planned` flag timing**: auto 12 re-evaluates `planned` every minute
-  (plus on SoC changes and at 22:00, 23:00, 00:30, 07:00, 08:00 and HA start),
-  so it stays fresh right up to when the acting window opens at 00:30.
+- **`planned` flag timing**: auto 12 evaluates the next-day charge decision at
+  22:00, then keeps the flag on through 08:00 even if target SoC is reached.
+  It re-evaluates charge power every minute and on SoC changes, while the
+  saved decision prevents later forecast changes from starting a new charge.
 - **10 and 13 were removed (2026-10-11)**: both were long-disabled legacy
   night-idle/night-charge automations, superseded by auto 11's own window and
   auto 12's handoff-idle branch. If you see references to them in old traces

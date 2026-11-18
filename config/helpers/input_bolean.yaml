@@ -1,7 +1,6 @@
 solarflow_night_charge_planned:
   name: "12 SolarFlow night charge planned"
   icon: mdi:calendar-night
-  initial: false
 
 solarflow_overnight_discharge_planned:
   name: "11 SolarFlow overnight discharge planned"

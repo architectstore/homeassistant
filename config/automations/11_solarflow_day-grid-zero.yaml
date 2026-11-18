@@ -2,15 +2,14 @@
 # GRID-ZERO CONTROLLER: Bidirectional discharge/charge
 # ============================================================================
 #
-# Window: 07:00–00:00, plus 00:30–07:00 when the saved overnight plan is on.
-# The overnight extension discharges only batteries above 40% SoC.
+# Window: 07:00–00:00; it extends through 07:00 when the 22:00 overnight plan
+# selects all-night discharge. The overnight extension stops each battery at
+# 40% SoC.
 #   - Can charge on solar export from sunrise onwards
 #   - Can discharge on import while each battery is above its configured floor
-#   - Automation 12 owns 00:00–07:00 except during a saved overnight-discharge
-#     plan, and 22:00–00:00 / 07:00–08:00 when
-#     binary_sensor.solarflow_low_pv_day is ON (cheap tariff, batteries are
-#     being kept/charged for the expensive day) -> this automation does nothing
-#     in those hours then.
+#   - Automation 12 owns the night when it saved a charge plan at 22:00.
+#   - Otherwise, a saved 22:00 overnight-discharge plan lets this automation
+#     continue through 07:00; without either plan, it idles after midnight.
 #
 # Discharge floor: solarflow_soc_discharge_min, independently per battery.
 #
@@ -68,10 +67,14 @@
     - platform: time
       at: "22:00:00"
       id: lock_check_2200
+    - platform: time
+      at: "00:00:00"
+      id: midnight_idle
     - platform: state
       entity_id:
         - input_boolean.solarflow_overnight_discharge_planned
         - input_boolean.solarflow_overnight_plan_ready
+        - input_boolean.solarflow_night_charge_planned
       id: overnight_plan_update
     - platform: homeassistant
       event: start
@@ -82,23 +85,27 @@
     - condition: state
       entity_id: input_boolean.solarflow_emergency_charge
       state: "off"
-    # Day control runs through midnight. The overnight extension starts only
-    # after the saved 00:30 plan grants it ownership.
+    # Day control runs through midnight. The 22:00 plan may extend discharge
+    # from midnight through 07:00; otherwise midnight gets one idle handoff.
     - condition: template
       value_template: >
         {% set t = now().strftime('%H:%M') %}
         {{ t >= '07:00'
-           or (t >= '00:30' and t < '07:00'
-               and is_state('input_boolean.solarflow_overnight_discharge_planned', 'on')) }}
-    # Low-tariff hours (22-08) on a low-PV day belong to automation 12
+           or (t < '07:00'
+               and (is_state('input_boolean.solarflow_overnight_discharge_planned', 'on')
+                    or trigger.id == 'midnight_idle')) }}
+    # At 08:00, wait for auto 12 to clear its charge limits before resuming.
+    - condition: template
+      value_template: >-
+        {% set t = now().strftime('%H:%M') %}
+        {{ not (t >= '08:00'
+                and is_state('input_boolean.solarflow_night_charge_planned', 'on')) }}
+    # A saved night-charge plan owns 22:00-08:00.
     - condition: template
       value_template: >
         {% set t = now().strftime('%H:%M') %}
-        {% set overnight_planned = t >= '00:30' and t < '07:00'
-                                    and is_state('input_boolean.solarflow_overnight_discharge_planned', 'on') %}
-        {{ overnight_planned
-           or not (is_state('binary_sensor.solarflow_low_pv_day', 'on')
-                   and (t >= '22:00' or t < '08:00')) }}
+        {% set night_charge_planned = is_state('input_boolean.solarflow_night_charge_planned', 'on') %}
+        {{ not (night_charge_planned and (t >= '22:00' or t < '08:00')) }}
     - condition: template
       value_template: >
         {{ has_value('sensor.shelly_phase_a_power')
@@ -162,11 +169,11 @@
         evening_hold_soc: 40
         pv_forecast_tomorrow: "{{ states('sensor.solar_production_estimate_tomorrow_total') | float(999) }}"
         evening_hold: "{{ now().strftime('%H:%M') >= '22:00' and pv_forecast_tomorrow < evening_hold_pv_kwh }}"
-        # From 00:30-07:00, a saved high-PV plan permits discharge, but only
-        # while the individual battery remains above 40% SoC.
+        # A saved 22:00 high-PV plan permits discharge from 22:00-07:00, but
+        # only while the individual battery remains above 40% SoC.
         overnight_discharge_planned: >-
-          {{ now().strftime('%H:%M') >= '00:30'
-             and now().strftime('%H:%M') < '07:00'
+          {{ (now().strftime('%H:%M') >= '22:00'
+              or now().strftime('%H:%M') < '07:00')
              and is_state('input_boolean.solarflow_overnight_discharge_planned', 'on') }}
         overnight_discharge_soc_min: 40
         floor_1: "{{ (not avail_1) or (soc_1 <= soc_discharge_min) or (evening_hold and soc_1 < evening_hold_soc) or (overnight_discharge_planned and soc_1 <= overnight_discharge_soc_min) }}"
@@ -236,6 +243,35 @@
              or (has_value('number.solarflow_800_pro_input_limit') and (in1_now - c1) | abs > 30)
              or (has_value('number.solarflow_800_pro_2_input_limit') and (in2_now - c2) | abs > 30) }}
         act: "{{ (settled or floor_cutoff_pending) and (changed or mismatch) }}"
+
+    # With neither night plan selected, stop any discharge at midnight and
+    # leave the batteries idle until the 07:00 day-control start.
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: >-
+                {{ trigger.id == 'midnight_idle'
+                   and is_state('input_boolean.solarflow_overnight_discharge_planned', 'off')
+                   and is_state('input_boolean.solarflow_night_charge_planned', 'off') }}
+          sequence:
+            - service: number.set_value
+              target:
+                entity_id:
+                  - number.solarflow_800_pro_output_limit
+                  - number.solarflow_800_pro_input_limit
+                  - number.solarflow_800_pro_2_output_limit
+                  - number.solarflow_800_pro_2_input_limit
+              data:
+                value: 0
+              continue_on_error: true
+            - service: input_number.set_value
+              target:
+                entity_id:
+                  - input_number.solarflow_discharge_last
+                  - input_number.solarflow_charge_last
+              data:
+                value: 0
+            - stop: "No overnight plan; idle until 07:00"
 
     - condition: template
       value_template: "{{ act }}"
